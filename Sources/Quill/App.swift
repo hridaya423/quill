@@ -379,17 +379,21 @@ final class EditorController: NSViewController {
             cards[id] = nil
         }
         let all = NSRange(location: 0, length: (text.string as NSString).length)
-        text.clearMarks(.backgroundColor)
+        text.clearMarks(.underlineColor)
         text.gutter = !margin.isEmpty
         guard !margin.isEmpty else { return }
-        let x = text.textContainerInset.width + min(Theme.column, text.bounds.width - text.textContainerInset.width * 2) + 36
+        let x = text.textContainerInset.width + (text.textContainer?.size.width ?? Theme.column) + 40
         var floor: CGFloat = 0
         for note in margin {
             guard NSMaxRange(note.range) <= all.length else { continue }
-            let tint = Theme.accent.withAlphaComponent(activeNote == note.id ? 0.2 : 0.09)
-            text.mark(note.range, [.backgroundColor: tint])
+            var look: [NSAttributedString.Key: Any] = [
+                .underlineStyle: NSUnderlineStyle([.single, .patternDot]).rawValue,
+                .underlineColor: Theme.accent.withAlphaComponent(0.75),
+            ]
+            if activeNote == note.id { look[.backgroundColor] = Theme.accent.withAlphaComponent(0.14) }
+            text.mark(note.range, look)
             let card = cards[note.id] ?? {
-                let h = NSHostingView(rootView: NoteCard(note: note, active: false, apply: {}, dismiss: {}))
+                let h = NSHostingView(rootView: NoteCard(note: note, active: false, apply: {}, dismiss: {}, hover: { _ in }))
                 h.sizingOptions = [.intrinsicContentSize]
                 text.addSubview(h)
                 cards[note.id] = h
@@ -399,7 +403,12 @@ final class EditorController: NSViewController {
                 note: note,
                 active: activeNote == note.id,
                 apply: { [weak self] in self?.apply(note) },
-                dismiss: { [weak self] in self?.ws.margin.removeAll { $0.id == note.id } }
+                dismiss: { [weak self] in self?.ws.margin.removeAll { $0.id == note.id } },
+                hover: { [weak self] on in
+                    guard let self else { return }
+                    let next = on ? note.id : (self.activeNote == note.id ? nil : self.activeNote)
+                    if next != self.activeNote { self.activeNote = next; self.layoutNotes() }
+                }
             )
             let size = card.fittingSize
             let y = max(text.segments(note.range).first?.minY ?? 0, floor)

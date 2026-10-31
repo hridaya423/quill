@@ -40,7 +40,7 @@ public func prompt(_ r: Request, canEditFiles: Bool) -> String {
         lines += [
             "If they want the text changed, \(how). Make the smallest edits that do what they asked. Keep their voice. Leave every other word exactly as it is. Never touch other files and never run commands.",
             "If they asked a question or want your opinion, don't edit. Answer instead.",
-            "Finish with a short plain-text reply for them: one sentence after an edit, up to three sentences for an opinion. No Markdown, no lists, no preamble.",
+            "Finish with a plain-text reply for them. After an edit: one short sentence, at most 12 words, naming what you changed; don't quote the new text or mention what you left alone. For an opinion: up to three sentences, specific and honest. No Markdown, no lists, no preamble.",
         ]
     case .notes:
         lines += [

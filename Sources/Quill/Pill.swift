@@ -337,6 +337,7 @@ struct NoteCard: View {
     var active: Bool
     var apply: () -> Void
     var dismiss: () -> Void
+    var hover: (Bool) -> Void
     @State private var hovering = false
 
     var body: some View {
@@ -360,7 +361,7 @@ struct NoteCard: View {
         }
         .frame(width: 220, alignment: .leading)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { hovering = $0; hover($0) }
         .animation(.easeOut(duration: 0.15), value: hovering || active)
     }
 }

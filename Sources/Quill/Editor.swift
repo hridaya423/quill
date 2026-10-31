@@ -89,7 +89,7 @@ final class QuillTextView: NSTextView {
         let layout = NSTextLayoutManager()
         storage.addTextLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
-        container.widthTracksTextView = true
+        container.widthTracksTextView = false
         layout.textContainer = container
 
         let view = QuillTextView(frame: .zero, textContainer: container)
@@ -141,9 +141,10 @@ final class QuillTextView: NSTextView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         let side = max(36, (newSize.width - Theme.column - (gutter ? 280 : 0)) / 2)
-        if abs(textContainerInset.width - side) > 0.5 {
+        let width = min(Theme.column, newSize.width - 72)
+        if abs(textContainerInset.width - side) > 0.5 || textContainer?.size.width != width {
             textContainerInset = NSSize(width: side, height: 72)
-            textContainer?.size = NSSize(width: min(Theme.column, newSize.width - side * 2), height: CGFloat.greatestFiniteMagnitude)
+            textContainer?.size = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         }
         fx.frame = bounds
     }
