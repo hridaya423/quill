@@ -379,7 +379,7 @@ final class EditorController: NSViewController {
             cards[id] = nil
         }
         let all = NSRange(location: 0, length: (text.string as NSString).length)
-        text.render(.backgroundColor, nil, all)
+        text.clearMarks(.backgroundColor)
         text.gutter = !margin.isEmpty
         guard !margin.isEmpty else { return }
         let x = text.textContainerInset.width + min(Theme.column, text.bounds.width - text.textContainerInset.width * 2) + 36
@@ -387,7 +387,7 @@ final class EditorController: NSViewController {
         for note in margin {
             guard NSMaxRange(note.range) <= all.length else { continue }
             let tint = Theme.accent.withAlphaComponent(activeNote == note.id ? 0.2 : 0.09)
-            text.render(.backgroundColor, tint, note.range)
+            text.mark(note.range, [.backgroundColor: tint])
             let card = cards[note.id] ?? {
                 let h = NSHostingView(rootView: NoteCard(note: note, active: false, apply: {}, dismiss: {}))
                 h.sizingOptions = [.intrinsicContentSize]

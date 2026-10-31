@@ -81,6 +81,7 @@ final class QuillTextView: NSTextView {
     }
     private var activeLines = NSRange(location: 0, length: 0)
     private var pending: NSRange?
+    private var marks: [NSRange: [NSAttributedString.Key: Any]] = [:]
     let fx = CALayer()
 
     static func make() -> (NSScrollView, QuillTextView) {
@@ -160,6 +161,7 @@ final class QuillTextView: NSTextView {
     var text: String {
         get { string }
         set {
+            marks = [:]
             string = newValue
             pending = nil
             restyle(NSRange(location: 0, length: (string as NSString).length))
@@ -187,17 +189,22 @@ final class QuillTextView: NSTextView {
         return rects
     }
 
-    func render(_ key: NSAttributedString.Key, _ value: Any?, _ r: NSRange) {
-        guard let tlm = textLayoutManager, let tr = textRange(r) else { return }
-        if let value {
-            tlm.addRenderingAttribute(key, value: value, for: tr)
-        } else {
-            tlm.removeRenderingAttribute(key, for: tr)
-        }
+    func mark(_ r: NSRange, _ attributes: [NSAttributedString.Key: Any]?) {
+        marks[r] = attributes
+        restyle(r)
+    }
+
+    func clearMarks(_ key: NSAttributedString.Key) {
+        let touched = marks.filter { $0.value[key] != nil }
+        guard !touched.isEmpty else { return }
+        for (r, _) in touched { marks[r] = nil }
+        let len = (string as NSString).length
+        for (r, _) in touched where NSMaxRange(r) <= len { restyle(r) }
     }
 
     func replace(_ r: NSRange, with s: String) {
         guard let storage = textStorage else { return }
+        marks = marks.filter { NSMaxRange($0.key) <= r.location }
         storage.beginEditing()
         storage.replaceCharacters(in: r, with: NSAttributedString(string: s, attributes: Theme.bodyAttributes))
         storage.endEditing()
@@ -286,6 +293,10 @@ final class QuillTextView: NSTextView {
             } else {
                 storage.addAttributes([.font: Theme.hidden, .foregroundColor: NSColor.clear], range: marker)
             }
+        }
+        for (r, attributes) in marks {
+            let overlap = NSIntersectionRange(r, full)
+            if overlap.length > 0 { storage.addAttributes(attributes, range: overlap) }
         }
     }
 

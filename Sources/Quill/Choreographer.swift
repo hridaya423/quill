@@ -88,8 +88,7 @@ final class Choreographer {
         let count = inverse.count
         queue = []
         current = nil
-        let all = NSRange(location: 0, length: (view.string as NSString).length)
-        view.render(.foregroundColor, nil, all)
+        view.clearMarks(.foregroundColor)
         caret?.removeFromSuperlayer()
         caret = nil
         finish(count)
@@ -127,7 +126,7 @@ final class Choreographer {
         var strikes: [CALayer] = []
 
         if c.range.length > 0 {
-            view.render(.foregroundColor, Theme.red, c.range)
+            view.mark(c.range, [.foregroundColor: Theme.red])
             strikes = strike(view.segments(c.range))
             guard await pause(0.2) else { return }
             let rects = view.segments(c.range)
@@ -138,7 +137,7 @@ final class Choreographer {
         }
 
         if let (image, frame) = dustImage {
-            view.render(.foregroundColor, NSColor.clear, c.range)
+            view.mark(c.range, [.foregroundColor: NSColor.clear])
             dust(image, frame)
             for s in strikes { fadeAway(s, duration: 0.2) }
             guard await pause(0.3) else { return }
@@ -148,7 +147,7 @@ final class Choreographer {
         record(c, old: old)
         let fresh = NSRange(location: c.range.location, length: c.text.utf16.count)
         if fresh.length > 0 {
-            view.render(.foregroundColor, NSColor.clear, fresh)
+            view.mark(fresh, [.foregroundColor: NSColor.clear])
             guard await type(fresh) else { return }
         } else {
             guard await pause(0.12) else { return }
@@ -300,7 +299,8 @@ final class Choreographer {
             }
             guard target > shown else { continue }
             shown = target
-            view.render(.foregroundColor, nil, NSRange(location: r.location, length: shown))
+            view.clearMarks(.foregroundColor)
+            if shown < r.length { view.mark(NSRange(location: r.location + shown, length: r.length - shown), [.foregroundColor: NSColor.clear]) }
             if let seg = view.segments(NSRange(location: r.location + shown, length: 0)).first {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
