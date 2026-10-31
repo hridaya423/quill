@@ -15,6 +15,22 @@ final class Chrome {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static func main() {
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--transcribe"), i + 1 < args.count {
+            let file = URL(fileURLWithPath: args[i + 1])
+            Task { @MainActor in
+                let start = CFAbsoluteTimeGetCurrent()
+                do {
+                    let text = try await Listener().transcribe(file: file)
+                    print(String(format: "%.2fs\t%@", CFAbsoluteTimeGetCurrent() - start, text))
+                    exit(0)
+                } catch {
+                    print("error: \(error)")
+                    exit(1)
+                }
+            }
+            RunLoop.main.run()
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

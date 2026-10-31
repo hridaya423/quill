@@ -10,8 +10,9 @@ cp scripts/fixtures/pitch.md "$vault/pitch.md"
 pkill -x Quill 2>/dev/null || true
 defaults write app.quill.Quill mode "${QUILL_MODE:-guided}"
 defaults write app.quill.Quill choseMode -bool true
+defaults write app.quill.Quill agent "${QUILL_AGENT:-claude}"
 sleep 0.5
-open -n build/Quill.app --env QUILL_VAULT="$PWD/$vault"
+open -n build/Quill.app --env QUILL_VAULT="$PWD/$vault" ${ANTHROPIC_API_KEY:+--env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"}
 sleep 4
 
 front() {
