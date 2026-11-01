@@ -117,13 +117,6 @@ enum Brand {
         NSFont(descriptor: NSFontDescriptor(fontAttributes: [.family: family]), size: size) ?? Theme.serif(size)
     }
 
-    static func caps(_ text: String, _ size: CGFloat = 13) -> some View {
-        Text(text.lowercased())
-            .font(serif(size, .medium).lowercaseSmallCaps())
-            .tracking(size * 0.14)
-            .foregroundStyle(muted)
-    }
-
     static var art: NSImage? { url("bude.jpg").flatMap(NSImage.init(contentsOf:)) }
 }
 
@@ -145,12 +138,11 @@ enum Nib {
         p.addLine(to: pt(17, 12))
         p.addCurve(to: pt(10, 31), control1: pt(16.8, 18.5), control2: pt(11.4, 24))
         p.closeSubpath()
-        let hole = pt(10, 13.4)
-        let r = width * 0.1
-        p.addEllipse(in: CGRect(x: hole.x - r, y: hole.y - r, width: r * 2, height: r * 2))
-        let slit = width * 0.065
-        p.addRect(CGRect(x: hole.x - slit / 2, y: hole.y + r, width: slit, height: tip.y - hole.y - r + 1))
-        return p
+        let slit = width * 0.06
+        let start = pt(10, 9)
+        p.addRect(CGRect(x: start.x - slit / 2, y: start.y, width: slit, height: tip.y - start.y - height * 0.04))
+        let tilt = CGAffineTransform(translationX: tip.x, y: tip.y).rotated(by: .pi / 10).translatedBy(x: -tip.x, y: -tip.y)
+        return p.copy(using: [tilt]) ?? p
     }
 }
 
@@ -186,9 +178,9 @@ struct Wordmark: View {
             }
         }
         let stem = boxes[2], ell = boxes[3]
-        let width = stem.width * 1.75
-        let tip = CGPoint(x: stem.minX + stem.width * 0.5, y: stem.minY - size * 0.045)
-        let nib = Nib.path(tip: tip, top: ell.minY - size * 0.1, width: width)
+        let width = stem.width * 1.1
+        let tip = CGPoint(x: stem.minX + stem.width * 0.42, y: stem.minY - size * 0.06)
+        let nib = Nib.path(tip: tip, top: ell.minY - size * 0.14, width: width)
         let bounds = letters.boundingBoxOfPath.union(nib.boundingBoxOfPath)
         let shift = CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
         return Layout(letters: Path(letters).applying(shift), nib: Path(nib).applying(shift),
@@ -320,12 +312,8 @@ struct Overture: View {
         let cutWidth = Theme.width(cut, font)
         let keptWidth = Theme.width(kept, font)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Wordmark(size: 36)
-                Spacer()
-                Brand.caps("First proof")
-            }
-            .padding(.top, 46)
+            Wordmark(size: 36)
+                .padding(.top, 46)
             Spacer()
             VStack(alignment: .leading, spacing: -size * 0.2) {
                 Text("Write like")
@@ -386,12 +374,7 @@ struct Overture: View {
                 .opacity(phase >= 5 ? 1 : 0)
                 .offset(y: phase >= 5 ? 0 : 8)
             Spacer()
-            HStack {
-                Brand.caps("Quill for Mac")
-                Spacer()
-                Brand.caps("i")
-            }
-            .padding(.bottom, 34)
+            Spacer()
         }
         .padding(.horizontal, 92)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -420,16 +403,25 @@ struct Primary: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 14) {
-                Text(label.lowercased())
-                    .font(Brand.serif(16, .semibold).lowercaseSmallCaps())
-                    .tracking(2.4)
-                Text("↩").font(.system(size: 12, weight: .medium)).opacity(0.55)
+            HStack(spacing: 12) {
+                Text(label)
+                    .font(Brand.serif(19, .medium))
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 22, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Brand.sheet.opacity(0.12)))
+                    .opacity(0.7)
             }
             .foregroundStyle(Brand.sheet)
-            .padding(.horizontal, 26)
-            .padding(.vertical, 14)
-            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Brand.ink))
+            .padding(.leading, 24)
+            .padding(.trailing, 12)
+            .padding(.vertical, 11)
+            .background {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(Brand.ink)
+                    .shadow(color: Brand.ink.opacity(0.18), radius: 1, y: 1)
+                    .shadow(color: Brand.ink.opacity(0.12), radius: 12, y: 6)
+            }
         }
         .buttonStyle(Press())
         .keyboardShortcut(.defaultAction)
@@ -442,7 +434,6 @@ struct Onboarding: View {
     var finish: ((sentence: String, source: String)?) -> Void
     @Environment(\.accessibilityReduceMotion) private var still
 
-    private let names = ["", "The folder", "Your voice", "The co-writer"]
 
     var body: some View {
         ZStack {
@@ -451,9 +442,9 @@ struct Onboarding: View {
             Group {
                 switch run.step {
                 case .overture: Overture { go(.folder) }.ignoresSafeArea()
-                case .folder: split(1, folder, page: folderPage, slug: run.places.first { $0.url == run.chosen }?.label ?? "Folder")
-                case .voice: split(2, voice, page: voicePage, slug: "Voice.md")
-                case .cowriter: split(3, cowriter, page: cowriterPage, slug: "Your first edit")
+                case .folder: split(1, folder, page: folderPage)
+                case .voice: split(2, voice, page: voicePage)
+                case .cowriter: split(3, cowriter, page: cowriterPage)
                 }
             }
             .id(run.step)
@@ -473,11 +464,6 @@ struct Onboarding: View {
                             .keyboardShortcut(.cancelAction)
                     }
                     Spacer()
-                    HStack {
-                        Brand.caps("Quill for Mac")
-                        Spacer()
-                        Brand.caps(["", "ii", "iii", "iv"][run.step.rawValue])
-                    }
                 }
                 .padding(.top, 46)
                 .padding(.bottom, 34)
@@ -488,7 +474,7 @@ struct Onboarding: View {
         .onAppear { run.count() }
     }
 
-    private func split<L: View, R: View>(_ n: Int, _ left: L, page: R, slug: String) -> some View {
+    private func split<L: View, R: View>(_ n: Int, _ left: L, page: R) -> some View {
         HStack(alignment: .center, spacing: 80) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
@@ -498,14 +484,11 @@ struct Onboarding: View {
                             .frame(width: 28, height: 2)
                     }
                 }
-                .padding(.bottom, 18)
-                Brand.caps("\(["", "One", "Two", "Three"][n]) of three · \(names[n])")
-                    .padding(.bottom, 14)
+                .padding(.bottom, 28)
                 left
             }
             .frame(width: 470, alignment: .leading)
-            VStack(alignment: .leading, spacing: 38) {
-                Brand.caps("Proof · \(slug)")
+            VStack(alignment: .leading, spacing: 0) {
                 page
                     .frame(width: 380, height: 470, alignment: .topLeading)
                     .background(Brand.sheet)

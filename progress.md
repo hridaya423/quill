@@ -58,3 +58,8 @@ Research notes with sources: HIG, WWDC25, iA, Butterick, Rauno, Emil Kowalski, Z
 - `~/Library/Logs/Quill/turns.tsv`: latency for each turn.
 - Live run (`QUILL_LIVE`, `QUILL_CORPUS`, 10 vault passages, 20 turns): 0 held, 0 tells introduced, fingerprint distance Quill 19.51 vs generic 21.36.
 - `decisions.tsv`: each decision with its reason and evidence.
+
+- Wordmark nib tilted 18° clockwise around its tip, slit only, sized to sit as the dot of the i. Icon matches.
+- Removed letterspaced small-caps labels (First proof, footers, folios, step label, sheet slug) and `Brand.caps`.
+- Primary button: sentence-case Garamond 19 medium on an ink rounded rectangle (radius 11) with a ↩ keycap chip.
+- Evidence: snapshots in scratchpad snap6 inspected; `swift test` passes.

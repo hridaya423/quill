@@ -37,10 +37,11 @@ func render(_ px: Int) -> Data {
     NSShadow().set()
 
     let nibHeight = tile.height * (px <= 32 ? 0.74 : 0.6)
-    let width = nibHeight / 1.5
+    let width = nibHeight / 1.8
     let tipY = tile.midY - nibHeight / 2 - tile.height * 0.01
+    let lean = nibHeight * 0.15
     let topY = tipY + nibHeight
-    let box = CGRect(x: tile.midX, y: 0, width: 0, height: 0)
+    let box = CGRect(x: tile.midX - lean, y: 0, width: 0, height: 0)
     func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
         CGPoint(x: box.midX + (x - 10) / 20 * width, y: topY - (y - 1.2) / 29.8 * nibHeight)
     }
@@ -55,14 +56,14 @@ func render(_ px: Int) -> Data {
     nib.addCurve(to: pt(10, 31), control1: pt(16.8, 18.5), control2: pt(11.4, 24))
     nib.closeSubpath()
     if px > 32 {
-        let hole = pt(10, 13.4)
-        let r = width * (px >= 256 ? 0.075 : 0.1)
-        nib.addEllipse(in: CGRect(x: hole.x - r, y: hole.y - r, width: r * 2, height: r * 2))
-        let slit = width * (px >= 256 ? 0.03 : 0.065)
-        nib.addRect(CGRect(x: hole.x - slit / 2, y: tipY + nibHeight * 0.06, width: slit, height: hole.y - r - tipY - nibHeight * 0.06 + 0.5))
+        let slit = width * (px >= 256 ? 0.03 : 0.06)
+        let start = pt(10, 9)
+        nib.addRect(CGRect(x: start.x - slit / 2, y: tipY + nibHeight * 0.04, width: slit, height: start.y - tipY - nibHeight * 0.04))
     }
+    let tip = CGPoint(x: tile.midX - lean, y: tipY)
+    let tilt = CGAffineTransform(translationX: tip.x, y: tip.y).rotated(by: -.pi / 10).translatedBy(x: -tip.x, y: -tip.y)
     ctx.setFillColor(rubric.cgColor)
-    ctx.addPath(nib)
+    ctx.addPath(nib.copy(using: [tilt]) ?? nib)
     ctx.fillPath(using: .evenOdd)
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
