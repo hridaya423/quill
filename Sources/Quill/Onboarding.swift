@@ -96,6 +96,8 @@ enum Brand {
     static let body = Color(red: 0.29, green: 0.259, blue: 0.216)
     static let muted = Color(red: 0.435, green: 0.396, blue: 0.337)
     static let rubric = Color(red: 0.639, green: 0.231, blue: 0.169)
+    static let steel = Color(red: 0.56, green: 0.55, blue: 0.53)
+    static let graphite = Color(red: 0.29, green: 0.285, blue: 0.28)
     static let ease = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.6)
     static let family = "EB Garamond"
 
@@ -121,28 +123,27 @@ enum Brand {
 }
 
 enum Nib {
-    static let outline: [(CGFloat, CGFloat)] = [(10, 31), (3, 12), (3, 5.5), (7, 1.2), (13, 1.2), (17, 5.5), (17, 12)]
-
-    static func path(tip: CGPoint, top: CGFloat, width: CGFloat) -> CGPath {
+    static func halves(tip: CGPoint, top: CGFloat, width: CGFloat) -> (left: CGPath, right: CGPath) {
         let height = tip.y - top
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
             CGPoint(x: tip.x + (x - 10) / 20 * width, y: top + (y - 1.2) / 29.8 * height)
         }
-        let p = CGMutablePath()
-        p.move(to: pt(10, 31))
-        p.addCurve(to: pt(3, 12), control1: pt(8.6, 24), control2: pt(3.2, 18.5))
-        p.addLine(to: pt(3, 5.5))
-        p.addCurve(to: pt(7, 1.2), control1: pt(3, 3), control2: pt(4.6, 1.2))
-        p.addLine(to: pt(13, 1.2))
-        p.addCurve(to: pt(17, 5.5), control1: pt(15.4, 1.2), control2: pt(17, 3))
-        p.addLine(to: pt(17, 12))
-        p.addCurve(to: pt(10, 31), control1: pt(16.8, 18.5), control2: pt(11.4, 24))
-        p.closeSubpath()
-        let slit = width * 0.06
-        let start = pt(10, 9)
-        p.addRect(CGRect(x: start.x - slit / 2, y: start.y, width: slit, height: tip.y - start.y - height * 0.04))
-        let tilt = CGAffineTransform(translationX: tip.x, y: tip.y).rotated(by: .pi / 10).translatedBy(x: -tip.x, y: -tip.y)
-        return p.copy(using: [tilt]) ?? p
+        let left = CGMutablePath()
+        left.move(to: pt(10, 31))
+        left.addCurve(to: pt(3, 12), control1: pt(8.6, 24), control2: pt(3.2, 18.5))
+        left.addLine(to: pt(3, 5.5))
+        left.addCurve(to: pt(7, 1.2), control1: pt(3, 3), control2: pt(4.6, 1.2))
+        left.addLine(to: pt(10, 1.2))
+        left.closeSubpath()
+        let right = CGMutablePath()
+        right.move(to: pt(10, 1.2))
+        right.addLine(to: pt(13, 1.2))
+        right.addCurve(to: pt(17, 5.5), control1: pt(15.4, 1.2), control2: pt(17, 3))
+        right.addLine(to: pt(17, 12))
+        right.addCurve(to: pt(10, 31), control1: pt(16.8, 18.5), control2: pt(11.4, 24))
+        right.closeSubpath()
+        var tilt = CGAffineTransform(translationX: tip.x, y: tip.y).rotated(by: -.pi / 10).translatedBy(x: -tip.x, y: -tip.y)
+        return (left.copy(using: &tilt) ?? left, right.copy(using: &tilt) ?? right)
     }
 }
 
@@ -152,7 +153,8 @@ struct Wordmark: View {
 
     struct Layout {
         var letters: Path
-        var nib: Path
+        var light: Path
+        var dark: Path
         var bounds: CGRect
         var baseline: CGFloat
     }
@@ -179,11 +181,11 @@ struct Wordmark: View {
         }
         let stem = boxes[2], ell = boxes[3]
         let width = stem.width * 1.1
-        let tip = CGPoint(x: stem.minX + stem.width * 0.42, y: stem.minY - size * 0.06)
-        let nib = Nib.path(tip: tip, top: ell.minY - size * 0.14, width: width)
-        let bounds = letters.boundingBoxOfPath.union(nib.boundingBoxOfPath)
+        let tip = CGPoint(x: stem.midX, y: stem.minY - size * 0.06)
+        let nib = Nib.halves(tip: tip, top: ell.minY - size * 0.14, width: width)
+        let bounds = letters.boundingBoxOfPath.union(nib.left.boundingBoxOfPath).union(nib.right.boundingBoxOfPath)
         let shift = CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
-        return Layout(letters: Path(letters).applying(shift), nib: Path(nib).applying(shift),
+        return Layout(letters: Path(letters).applying(shift), light: Path(nib.left).applying(shift), dark: Path(nib.right).applying(shift),
                       bounds: bounds.offsetBy(dx: -bounds.minX, dy: -bounds.minY), baseline: -bounds.minY)
     }
 
@@ -191,7 +193,8 @@ struct Wordmark: View {
         let l = Self.layout(size)
         Canvas { ctx, _ in
             ctx.fill(l.letters, with: .color(ink))
-            ctx.fill(l.nib, with: .color(Brand.rubric), style: FillStyle(eoFill: true))
+            ctx.fill(l.light, with: .color(Brand.steel))
+            ctx.fill(l.dark, with: .color(Brand.graphite))
         }
         .frame(width: l.bounds.width, height: l.bounds.height)
         .alignmentGuide(.firstTextBaseline) { _ in l.baseline }
