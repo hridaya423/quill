@@ -32,6 +32,12 @@ sleep 0.4
 osascript -e "tell application \"System Events\" to keystroke \"$request\""
 screencapture -x -o -l "$id" "$out/command.png"
 osascript -e 'tell application "System Events" to key code 36'
+if [ -n "${TYPE_DURING:-}" ]; then
+  sleep 1.2
+  front
+  osascript -e 'tell application "System Events" to key code 125 using command down'
+  osascript -e "tell application \"System Events\" to keystroke \"$TYPE_DURING\""
+fi
 start=$(date +%s); i=0
 while [ $(( $(date +%s) - start )) -lt "$seconds" ]; do
   screencapture -x -o -l "$id" "$out/frames/$(printf %04d $i).png"; i=$((i+1))

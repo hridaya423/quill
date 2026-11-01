@@ -293,9 +293,13 @@ final class EditorController: NSViewController {
         withObservationTracking {
             _ = ws.margin
             _ = ws.phase
+            _ = chrome.commanding
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
+                if !self.chrome.commanding, self.view.window?.firstResponder !== self.text {
+                    self.view.window?.makeFirstResponder(self.text)
+                }
                 self.layoutNotes()
                 self.afterTurn()
                 self.observe()
