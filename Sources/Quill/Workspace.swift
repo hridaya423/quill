@@ -132,6 +132,11 @@ final class Workspace {
         editor.onUndo = { name, back in Ledger.event(back ? "undo" : "redo", detail: name) }
     }
 
+    func replace(_ agent: Agent) {
+        self.agent.shutdown()
+        self.agent = agent
+    }
+
     private func swapAgent() {
         endTurn()
         keeper.spec = spec
@@ -184,8 +189,7 @@ final class Workspace {
     func switchVault(_ url: URL) {
         endTurn()
         leave()
-        if let stream { FSEventStreamStop(stream); FSEventStreamInvalidate(stream); FSEventStreamRelease(stream) }
-        stream = nil
+        unwatch()
         vault = url
         Prefs.vault = url.path
         current = nil
@@ -630,7 +634,16 @@ final class Workspace {
     func quit() {
         endTurn()
         leave()
+        unwatch()
         agent.shutdown()
+    }
+
+    private func unwatch() {
+        guard let stream else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        self.stream = nil
     }
 
     private func watch() {

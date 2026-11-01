@@ -41,11 +41,21 @@ enum Firstrun {
     nonisolated static func sentence(in folders: [URL]) -> (String, String)? {
         let hedges = ["basically", "kind of", "sort of", "really", "just", "maybe", "pretty", "i think", "quite", "very", "probably", "actually"]
         var best: (score: Int, text: String, source: String)?
+        let journal = /(?i)\/(journal|daily|diary|daily notes|logs?)\//
+        let dated = /^\d{4}-\d{2}-\d{2}/
         for folder in folders {
-            let files = (FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])?
+            let key = URLResourceKey.contentModificationDateKey
+            let files = (FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [key], options: [.skipsHiddenFiles])?
                 .compactMap { $0 as? URL } ?? [])
-                .filter { $0.pathExtension == "md" && !$0.path.contains("/Journal/") && $0.lastPathComponent != "Voice.md" && !$0.lastPathComponent.contains("excalidraw") }
-            for f in files.prefix(800) {
+                .filter { f in
+                    f.pathExtension == "md" && f.path.firstMatch(of: journal) == nil && f.lastPathComponent.firstMatch(of: dated) == nil
+                        && f.lastPathComponent != "Voice.md" && !f.lastPathComponent.contains("excalidraw")
+                }
+                .sorted {
+                    ((try? $0.resourceValues(forKeys: [key]).contentModificationDate) ?? .distantPast)
+                        > ((try? $1.resourceValues(forKeys: [key]).contentModificationDate) ?? .distantPast)
+                }
+            for f in files.prefix(120) {
                 guard let text = try? String(contentsOf: f, encoding: .utf8), isWriting(text) else { continue }
                 for s in sentences(in: prose(from: text, lists: false)) {
                     let n = s.split(separator: " ").count
@@ -63,7 +73,7 @@ enum Firstrun {
 @MainActor
 @Observable
 final class Firstrunner {
-    enum Step: Int { case overture, folder, voice, cowriter }
+    enum Step: Int { case overture, folder, setup }
     var step: Step = .overture
     var places: [Place]
     var chosen: URL
@@ -71,6 +81,7 @@ final class Firstrunner {
     var lines: [String] = []
     var reading = false
     var read = false
+    var learn = true
 
     init(current: URL) {
         let found = Firstrun.places()
@@ -370,12 +381,10 @@ struct Overture: View {
                 .frame(maxWidth: 500, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 32)
-                .opacity(phase >= 5 ? 1 : 0)
-                .offset(y: phase >= 5 ? 0 : 8)
+                .opacity(phase >= 1 ? 1 : 0)
             Primary(label: "Begin", action: begin)
                 .padding(.top, 40)
-                .opacity(phase >= 5 ? 1 : 0)
-                .offset(y: phase >= 5 ? 0 : 8)
+                .opacity(phase >= 1 ? 1 : 0)
             Spacer()
             Spacer()
         }
@@ -446,8 +455,7 @@ struct Onboarding: View {
                 switch run.step {
                 case .overture: Overture { go(.folder) }.ignoresSafeArea()
                 case .folder: split(1, folder, page: folderPage)
-                case .voice: split(2, voice, page: voicePage)
-                case .cowriter: split(3, cowriter, page: cowriterPage)
+                case .setup: split(2, cowriter, page: cowriterPage)
                 }
             }
             .id(run.step)
@@ -481,7 +489,7 @@ struct Onboarding: View {
         HStack(alignment: .center, spacing: 80) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
-                    ForEach(1...3, id: \.self) { i in
+                    ForEach(1...2, id: \.self) { i in
                         Rectangle()
                             .fill(i < n ? Brand.ink : i == n ? Brand.rubric : Brand.ink.opacity(0.15))
                             .frame(width: 28, height: 2)
@@ -557,10 +565,18 @@ struct Onboarding: View {
                     }
                 }
             }
+            Toggle(isOn: Binding(get: { run.learn }, set: { run.learn = $0 })) {
+                Text("Learn my voice from these notes. It stays on this Mac, in Voice.md.")
+                    .font(Brand.serif(16)).foregroundStyle(Brand.body)
+            }
+            .toggleStyle(.checkbox)
+            .tint(Brand.rubric)
+            .padding(.top, 20)
             HStack(spacing: 24) {
                 Primary(label: "Continue") {
                     ws.switchVault(run.chosen)
-                    go(.voice)
+                    if run.learn { readNotes() }
+                    go(.setup)
                 }
                 Button("Choose another folder…") { choose() }
                     .buttonStyle(.plain).font(Brand.serif(16)).foregroundStyle(Brand.muted)
@@ -594,22 +610,6 @@ struct Onboarding: View {
         .animation(.easeOut(duration: 0.3), value: run.chosen)
     }
 
-    private var voice: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            title("Let Quill read how you write.", "Quill measures your sentences, punctuation, and habits on this Mac. It writes the results to Voice.md, a note that you can read and edit.")
-            if run.read {
-                Primary(label: "Continue") { go(.cowriter) }
-            } else {
-                HStack(spacing: 24) {
-                    Primary(label: run.reading ? "Reading" : "Read my notes") { readNotes() }
-                        .disabled(run.reading)
-                    Button("Not now") { go(.cowriter) }
-                        .buttonStyle(.plain).font(Brand.serif(16)).foregroundStyle(Brand.muted)
-                }
-            }
-        }
-    }
-
     private var voicePage: some View {
         VStack(alignment: .leading, spacing: 9) {
             Text("My voice").font(Brand.serif(28, .medium)).foregroundStyle(Brand.ink)
@@ -631,7 +631,7 @@ struct Onboarding: View {
 
     private var cowriter: some View {
         VStack(alignment: .leading, spacing: 0) {
-            title("Choose your co-writer.", "Quill uses the sign-in of the tool that you choose. Your current subscription works.")
+            title("Choose your co-writer.", "Quill uses the sign-in of the tool you choose, so your current subscription works.")
             VStack(spacing: 0) {
                 rule()
                 ForEach(AgentSpec.all.filter { $0.requires != nil || ws.hasKey }) { spec in
@@ -639,21 +639,53 @@ struct Onboarding: View {
                     let on = ws.agentID == spec.id
                     row(on: on, enabled: ready != false, mark: {
                         Circle().fill(ready == true ? Color.greenInk : Brand.ink.opacity(ready == false ? 0.2 : 0.4)).frame(width: 7, height: 7)
-                    }, label: spec.name, detail: ready == false ? (spec.requires == "npx" ? "Needs Node" : "Not installed") : spec.detail) {
+                    }, label: spec.name, detail: ready == false ? spec.missing : spec.detail) {
                         ws.agentID = spec.id
                     }
                 }
             }
+            HStack(spacing: 28) {
+                if !ws.models.isEmpty {
+                    Picker("Model", selection: Binding(get: { ws.model?.id ?? "" }, set: { ws.choose(model: $0) })) {
+                        ForEach(ws.models) { m in Text(m.name).tag(m.id) }
+                    }
+                    .fixedSize()
+                } else if ws.available(ws.spec) == true {
+                    Text("Loading models…").font(Brand.serif(15).italic()).foregroundStyle(Brand.muted)
+                }
+                Picker("Answers", selection: $ws.mode) {
+                    Text("Edits to review").tag(Mode.guided)
+                    Text("Margin notes").tag(Mode.notes)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
+            .font(Brand.serif(15))
+            .padding(.top, 22)
             Primary(label: "Open my first edit") { done(ws.agentID) }
-                .padding(.top, 30)
+                .padding(.top, 26)
         }
         .onAppear { ws.checkAgents() }
     }
 
     private var cowriterPage: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if !run.lines.isEmpty || run.reading {
+                Text("My voice").font(Brand.serif(22, .medium)).foregroundStyle(Brand.ink)
+                ForEach(Array(run.lines.prefix(4).enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("¶").font(Brand.serif(14)).foregroundStyle(Brand.rubric)
+                        Text(line).font(Brand.serif(15)).foregroundStyle(Brand.ink).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .transition(.opacity.combined(with: .offset(y: 8)))
+                }
+                if run.reading, run.lines.isEmpty {
+                    Text("Reading your notes.").font(Brand.serif(15).italic()).foregroundStyle(Brand.muted)
+                }
+                Divider().padding(.vertical, 6)
+            }
             Text("Your first edit").font(Brand.serif(28, .medium)).foregroundStyle(Brand.ink)
-            Text("Quill opens one of your sentences. Press ⌘↩, or hold the right ⌥ key and say the change.")
+            Text("Quill opens one of your recent sentences on a practice page. Press ⌘↩, or hold \(Prefs.talkKey.label) and say the change. Keep it with ⌘↩ or revert it with ⌘⌫.")
                 .font(Brand.serif(18)).foregroundStyle(Brand.ink).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 Text("old words").strikethrough(color: Color.redInk).foregroundStyle(Color.redInk)
@@ -661,7 +693,7 @@ struct Onboarding: View {
             }
             .font(Brand.serif(18))
             .padding(.vertical, 4)
-            Text("One ⌘Z removes the full edit.").font(Brand.serif(15).italic()).foregroundStyle(Brand.muted)
+            Text("Your notes change only when you keep a change.").font(Brand.serif(15).italic()).foregroundStyle(Brand.muted)
             Spacer()
         }
         .padding(32)

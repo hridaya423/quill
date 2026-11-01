@@ -177,15 +177,14 @@ struct Snapshots {
             run.step = .folder
             try? await Task.sleep(for: .milliseconds(900))
             Self.render(host, "onboard-1-folder", dark: dark)
-            run.step = .voice
+            run.step = .setup
             run.lines = describe(fingerprint(["i don't know. so this is pretty much it: the thing works, mostly. we ship it tomorrow (maybe)."]))
             run.read = true
-            try? await Task.sleep(for: .milliseconds(900))
-            Self.render(host, "onboard-2-voice", dark: dark)
-            run.step = .cowriter
             ws.installed = ["npx": true, "codex": true, "gemini": false, "opencode": false]
+            ws.models = [ModelChoice(id: "default", name: "Opus 4.8 (default)"), ModelChoice(id: "opus", name: "Opus 5.5")]
+            ws.model = ws.models[1]
             try? await Task.sleep(for: .milliseconds(900))
-            Self.render(host, "onboard-3-cowriter", dark: dark)
+            Self.render(host, "onboard-2-setup", dark: dark)
         }
     }
 }
