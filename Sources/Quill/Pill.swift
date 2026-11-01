@@ -230,12 +230,13 @@ struct Pill: View {
 
     private func step(_ delta: Int) -> KeyPress.Result {
         let history = chrome.history
-        guard !history.isEmpty else { return .ignored }
+        guard !history.isEmpty, delta < 0 || chrome.recall != nil else { return .ignored }
+        if chrome.recall == nil { chrome.stash = chrome.draft }
         let next = (chrome.recall ?? history.count) + delta
         guard next >= 0 else { return .handled }
         if next >= history.count {
             chrome.recall = nil
-            chrome.draft = ""
+            chrome.draft = chrome.stash
         } else {
             chrome.recall = next
             chrome.draft = history[next]

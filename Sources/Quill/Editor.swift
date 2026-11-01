@@ -55,7 +55,7 @@ enum Theme {
         p.maximumLineHeight = lineHeight
         p.paragraphSpacingBefore = before
         p.paragraphSpacing = after
-        p.firstLineHeadIndent = hang + indent - hanging
+        p.firstLineHeadIndent = max(0, hang + indent - hanging)
         p.headIndent = hang + indent
         return p
     }
@@ -149,7 +149,7 @@ final class QuillTextView: NSTextView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        let side = max(36, (newSize.width - Theme.column - (gutter ? 280 : 0)) / 2) - Theme.hang
+        let side = max(8, max(36, (newSize.width - Theme.column - (gutter ? 280 : 0)) / 2) - Theme.hang)
         let width = min(Theme.column, newSize.width - 72) + Theme.hang
         if abs(textContainerInset.width - side) > 0.5 || textContainer?.size.width != width {
             textContainerInset = NSSize(width: side, height: (Self.top + Self.bottom) / 2)
@@ -185,7 +185,10 @@ final class QuillTextView: NSTextView {
         let sel = selectedRange()
         let m = (marker as NSString).length
         let outer = NSRange(location: sel.location - m, length: sel.length + 2 * m)
-        if outer.location >= 0, NSMaxRange(outer) <= text.length,
+        let doubled = m == 1 && outer.location > 0 && NSMaxRange(outer) < text.length
+            && text.substring(with: NSRange(location: outer.location - 1, length: 1)) == marker
+            && text.substring(with: NSRange(location: NSMaxRange(outer), length: 1)) == marker
+        if !doubled, outer.location >= 0, NSMaxRange(outer) <= text.length,
            text.substring(with: NSRange(location: outer.location, length: m)) == marker,
            text.substring(with: NSRange(location: NSMaxRange(sel), length: m)) == marker {
             let inner = text.substring(with: sel)
@@ -207,7 +210,9 @@ final class QuillTextView: NSTextView {
         let text = string as NSString
         let line = text.lineRange(for: NSRange(location: selectedRange().location, length: 0))
         let body = text.substring(with: line)
-        let hashes = body.prefix { $0 == "#" }.count
+        let run = body.prefix { $0 == "#" }.count
+        let after = body.dropFirst(run).first
+        let hashes = after == nil || after == " " || after == "\n" ? run : 0
         var marker = hashes > 0 ? hashes : 0
         if hashes > 0, body.dropFirst(hashes).first == " " { marker += 1 }
         let existing = NSRange(location: line.location, length: hashes > 0 ? marker : 0)
@@ -380,7 +385,8 @@ final class QuillTextView: NSTextView {
         let origin = textContainerOrigin
         let x = origin.x + Theme.hang + 2
         Theme.faint.setFill()
-        tlm.enumerateTextLayoutFragments(from: tlm.textViewportLayoutController.viewportRange?.location ?? tlm.documentRange.location, options: []) { fragment in
+        let start = tlm.textLayoutFragment(for: CGPoint(x: 0, y: max(0, rect.minY - origin.y)))?.rangeInElement.location ?? tlm.documentRange.location
+        tlm.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
             let frame = fragment.layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y)
             if frame.minY > rect.maxY { return false }
             guard frame.maxY >= rect.minY else { return true }

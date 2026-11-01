@@ -12,6 +12,7 @@ final class Chrome {
     var selectedWords = 0
     var history: [String] = UserDefaults.standard.stringArray(forKey: "history") ?? []
     var recall: Int?
+    var stash = ""
 
     func remember(_ words: String) {
         history.removeAll { $0 == words }
@@ -182,6 +183,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             find("Use Selection for Find", "e", .command, .setFindString),
             item("Jump to Selection", #selector(NSResponder.centerSelectionInVisibleArea(_:)), "j"),
         ].forEach(findMenu.addItem)
+        let spelling = NSMenu(title: "Spelling and Grammar")
+        [
+            item("Show Spelling and Grammar", #selector(NSText.showGuessPanel(_:)), ":"),
+            item("Check Document Now", #selector(NSText.checkSpelling(_:)), ";"),
+            .separator(),
+            item("Check Spelling While Typing", #selector(NSTextView.toggleContinuousSpellChecking(_:))),
+        ].forEach(spelling.addItem)
+        let spellingItem = item("Spelling and Grammar", nil)
+        spellingItem.submenu = spelling
         let findItem = item("Find", nil)
         findItem.submenu = findMenu
         _ = add("Edit", [
@@ -196,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
             .separator(),
             findItem,
+            spellingItem,
         ])
         _ = add("Format", [
             item("Bold", #selector(QuillTextView.bold(_:)), "b"),
@@ -206,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Heading 1", #selector(QuillTextView.heading(_:)), "1", tag: 1),
             item("Heading 2", #selector(QuillTextView.heading(_:)), "2", tag: 2),
             item("Heading 3", #selector(QuillTextView.heading(_:)), "3", tag: 3),
-            item("Body Text", #selector(QuillTextView.heading(_:)), "0", tag: 0),
+            item("Body Text", #selector(QuillTextView.heading(_:)), tag: 0),
         ])
         let agents = NSMenu(title: "Co-writer")
         for (i, spec) in AgentSpec.all.enumerated() {
@@ -231,8 +242,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = add("View", [
             item("Hide Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]),
             .separator(),
-            item("Actual Size", #selector(EditorController.actualSize(_:)), "0", [.command, .option]),
+            item("Actual Size", #selector(EditorController.actualSize(_:)), "0"),
             item("Zoom In", #selector(EditorController.zoomIn(_:)), "+"),
+            {
+                let i = item("Zoom In", #selector(EditorController.zoomIn(_:)), "=")
+                i.isHidden = true
+                i.allowsKeyEquivalentWhenHidden = true
+                return i
+            }(),
             item("Zoom Out", #selector(EditorController.zoomOut(_:)), "-"),
             .separator(),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
@@ -335,12 +352,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuItemValidation {}
 
+extension EditorController: NSMenuItemValidation {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(zoomIn(_:)): scroll.magnification < scroll.maxMagnification - 0.01
+        case #selector(zoomOut(_:)): scroll.magnification > scroll.minMagnification + 0.01
+        case #selector(actualSize(_:)): abs(scroll.magnification - 1) > 0.01
+        default: true
+        }
+    }
+}
+
 @MainActor
 final class EditorController: NSViewController {
     let ws: Workspace
     let chrome = Chrome()
     private(set) var text: QuillTextView!
-    private var scroll: NSScrollView!
+    fileprivate var scroll: NSScrollView!
     private var cards: [Int: NSHostingView<NoteCard>] = [:]
     private var activeNote: Int?
     private var monitor: Any?
@@ -426,6 +454,11 @@ final class EditorController: NSViewController {
         UserDefaults.standard.set(clamped, forKey: "zoom")
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        title()
+    }
+
     private func remember() {
         UserDefaults.standard.set(scroll.magnification, forKey: "zoom")
     }
@@ -458,10 +491,12 @@ final class EditorController: NSViewController {
         text.isEditable = ws.current != nil
     }
 
-    private var spoken: Phase = .idle
+    private var spoken = ""
     private func announce() {
-        guard ws.phase != spoken else { return }
-        spoken = ws.phase
+        let kind = "\(ws.phase)".prefix { $0 != "(" }
+        let id = kind == "thinking" || kind == "applying" ? String(kind) : "\(ws.phase)"
+        guard id != spoken else { return }
+        spoken = id
         let line: String? = switch ws.phase {
         case .done(let n): n == 0 ? "Nothing to change" : n == 1 ? "1 change. Command Z to undo." : "\(n) changes. Command Z to undo."
         case .said(let s): s

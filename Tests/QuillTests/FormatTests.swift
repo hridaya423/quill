@@ -70,4 +70,46 @@ struct FormatTests {
         #expect(names == ["Other.md", "Spring launch plan.md"])
         #expect(try String(contentsOf: vault.appending(path: "Spring launch plan.md"), encoding: .utf8) == "# Spring launch plan\n")
     }
+
+    @Test func italicInsideBoldAddsEmphasisInsteadOfStrippingBold() {
+        let v = view("a **bold** b")
+        v.setSelectedRange(NSRange(location: 4, length: 4))
+        v.italic(nil)
+        #expect(v.string == "a ***bold*** b")
+    }
+
+    @Test func bodyTextKeepsHashtags() {
+        let v = view("#tag line")
+        v.setSelectedRange(NSRange(location: 3, length: 0))
+        let item = NSMenuItem()
+        item.tag = 0
+        v.heading(item)
+        #expect(v.string == "#tag line")
+    }
+
+    @Test func clicksLandOnTheCharacterUnderThePointer() {
+        let v = view("# Title\n\nThe first paragraph of the note.\n\n- a list item")
+        for word in ["Title", "first", "list"] {
+            let r = (v.string as NSString).range(of: word)
+            let rect = v.segments(NSRange(location: r.location, length: 1)).first!
+            let index = v.characterIndexForInsertion(at: CGPoint(x: rect.minX + 1, y: rect.midY))
+            #expect(index == r.location, "\(word)")
+        }
+    }
+
+    @Test func untitledTitleDropsMarkupAndLeadingDots() throws {
+        let vault = FileManager.default.temporaryDirectory.appending(path: "quill-title-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
+        try "x".write(to: vault.appending(path: "Other.md"), atomically: true, encoding: .utf8)
+        let ws = Workspace(vault: vault)
+        let v = view("")
+        ws.editor = v
+        ws.refresh()
+        ws.create()
+        v.insertText(".**Plan**: v2", replacementRange: v.selectedRange())
+        ws.edited()
+        ws.open(vault.appending(path: "Other.md"))
+        let names = try FileManager.default.contentsOfDirectory(atPath: vault.path).sorted()
+        #expect(names == ["Other.md", "Plan- v2.md"])
+    }
 }

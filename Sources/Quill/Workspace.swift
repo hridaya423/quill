@@ -40,6 +40,7 @@ final class Workspace {
     }
     var agentID: String {
         didSet {
+            guard agentID != oldValue else { return }
             UserDefaults.standard.set(agentID, forKey: "agent")
             swapAgent()
         }
@@ -149,6 +150,9 @@ final class Workspace {
         editor?.text = text
         let (selection, y) = places[url] ?? (NSRange(location: 0, length: 0), 0)
         editor?.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
+        if y > 0, let editor, let tlm = editor.textLayoutManager {
+            tlm.ensureLayout(for: CGRect(x: 0, y: 0, width: editor.bounds.width, height: y + 2000))
+        }
         editor?.layoutSubtreeIfNeeded()
         editor?.scroll(NSPoint(x: 0, y: y))
         if case .failed = phase { phase = .idle }
@@ -159,10 +163,13 @@ final class Workspace {
         places[url] = (editor.selectedRange(), editor.enclosingScrollView?.contentView.bounds.origin.y ?? 0)
         let name = url.deletingPathExtension().lastPathComponent
         guard name.wholeMatch(of: /Untitled( \d+)?/) != nil,
-              let first = editor.string.split(separator: "\n", maxSplits: 1).first,
+              let first = editor.string.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first,
               first.hasPrefix("# ")
         else { return }
-        let heading = first.dropFirst(2).trimmingCharacters(in: .whitespaces)
+        let heading = first.dropFirst(2)
+            .replacingOccurrences(of: ":", with: "-")
+            .filter { !"*_`#[]".contains($0) }
+            .trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ".")))
         guard !heading.isEmpty else { return }
         rename(Note(url: url, modified: .now), to: String(heading.prefix(80)))
         if let renamed = current, renamed != url { places[renamed] = places.removeValue(forKey: url) }
@@ -187,6 +194,7 @@ final class Workspace {
     func rename(_ note: Note, to title: String) -> String? {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
         guard !clean.isEmpty, clean != note.title else { return nil }
+        if note.url == current { endTurn() }
         let target = note.url.deletingLastPathComponent().appending(path: "\(clean).md")
         guard !FileManager.default.fileExists(atPath: target.path) else { return "There's already a note named “\(clean)”." }
         flushSave()
@@ -205,6 +213,8 @@ final class Workspace {
 
     func trash(_ note: Note) {
         if current == note.url {
+            endTurn()
+            choreographer?.land()
             current = nil
             editor?.text = ""
         }
@@ -296,8 +306,16 @@ final class Workspace {
             return
         }
         if available(spec) == false {
-            let need = spec.requires == nil ? "an API key" : spec.requires == "npx" ? "Node" : "the \(spec.requires!) command"
-            fail("\(spec.name) needs \(need). Install it, or choose another co-writer.", remedy: ("Choose…", { [weak self] in self?.showSettings() }))
+            let spec = spec
+            Task {
+                if let binary = spec.requires { installed[binary] = await Quill.installed(binary) }
+                if available(spec) == false {
+                    let need = spec.requires == nil ? "an API key" : spec.requires == "npx" ? "Node" : "the \(spec.requires!) command"
+                    fail("\(spec.name) needs \(need). Install it, or choose another co-writer.", remedy: ("Choose…", { [weak self] in self?.showSettings() }))
+                } else {
+                    ask(words)
+                }
+            }
             return
         }
         choreographer?.land()
