@@ -23,6 +23,7 @@ struct Pill: View {
     @Bindable var chrome: Chrome
     @State private var hovering = false
     @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 10) {
@@ -30,7 +31,7 @@ struct Pill: View {
             content
         }
         .animation(enter, value: chrome.choosingMode)
-        .animation(enter, value: key)
+        .animation(chrome.commanding || reduceMotion ? nil : enter, value: key)
         .padding(.bottom, 26)
         .frame(maxWidth: .infinity, alignment: .bottom)
     }
@@ -283,8 +284,9 @@ struct Waveform: View {
 }
 
 struct Orb: View {
+    @Environment(\.accessibilityReduceMotion) private var still
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(paused: still)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let s = 0.75 + 0.25 * (0.5 + 0.5 * sin(t * 4.2))
             Circle()
@@ -299,7 +301,16 @@ struct Orb: View {
 
 struct Shimmer: View {
     var text: String
+    @Environment(\.accessibilityReduceMotion) private var still
     var body: some View {
+        if still {
+            Text(text).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
+        } else {
+            shimmer
+        }
+    }
+
+    private var shimmer: some View {
         TimelineView(.animation) { context in
             let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
             Text(text)

@@ -29,7 +29,7 @@ enum Theme {
     static let wash = color(0xF1EFEA, 0x222220)
 
     static let size: CGFloat = 18
-    static let column: CGFloat = 640
+    static let column: CGFloat = 608
     static let hang: CGFloat = 48
 
     static func serif(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {

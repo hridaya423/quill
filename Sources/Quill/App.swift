@@ -453,7 +453,7 @@ final class EditorController: NSViewController {
 
     private func title() {
         guard let window = view.window else { return }
-        window.title = ws.current?.deletingPathExtension().lastPathComponent ?? "Quill"
+        window.title = ws.current?.deletingPathExtension().lastPathComponent ?? ""
         window.representedURL = ws.current
         text.isEditable = ws.current != nil
     }
@@ -710,7 +710,7 @@ struct AgentBadge: View {
         default: break
         }
         switch ws.available(ws.spec) {
-        case true?: return (.greenInk, nil)
+        case true?: return (.soft, nil)
         case false?: return (.redInk, ws.spec.requires == nil ? "Needs a key" : ws.spec.requires == "npx" ? "Needs Node" : "Not installed")
         case nil: return (.faint, nil)
         }
