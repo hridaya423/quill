@@ -20,9 +20,29 @@ struct Note: Identifiable, Hashable {
     var title: String { url.deletingPathExtension().lastPathComponent }
 }
 
+struct Line: Identifiable, Equatable {
+    var id = UUID()
+    var words: String
+    var reply: String
+    var failed = false
+}
+
+struct Asked {
+    var id = UUID().uuidString
+    var note: String
+    var request: String
+    var mode: Mode
+    var agent: String
+    var held: [String] = []
+    var retried = false
+    var exchanges: [Exchange] = []
+}
+
 @MainActor
 @Observable
 final class Workspace {
+    static let desk = Ledger.dir.appending(path: "desk")
+
     var vault: URL
     var notes: [Note] = []
     var current: URL?
@@ -31,37 +51,44 @@ final class Workspace {
     }
     var level: Float = 0
     var margin: [MarginNote] = []
+    var review = Review()
+    var transcript: [URL: [Line]] = [:]
     var installed: [String: Bool] = [:]
     var remedy: (label: String, action: () -> Void)?
+    var busy = false
+    var model: ModelChoice?
+    var models: [ModelChoice] = []
     @ObservationIgnored var showSettings: () -> Void = {}
     var hasKey = Keychain.anthropicKey?.isEmpty == false
     var mode: Mode {
-        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "mode") }
+        didSet { Prefs.mode = mode }
     }
     var agentID: String {
         didSet {
             guard agentID != oldValue else { return }
-            UserDefaults.standard.set(agentID, forKey: "agent")
+            Prefs.agent = agentID
             swapAgent()
         }
     }
 
     @ObservationIgnored weak var editor: QuillTextView?
     @ObservationIgnored var choreographer: Choreographer?
-    @ObservationIgnored private var base = ""
-    @ObservationIgnored private var inTurn = false
+    @ObservationIgnored private var saved = ""
+    @ObservationIgnored private var deskBase = ""
+    @ObservationIgnored private var deskFile: URL?
+    @ObservationIgnored private var holding = true
     @ObservationIgnored private var turn = 0
+    @ObservationIgnored private var asked: [Int: Asked] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var settle: Task<Void, Never>?
     @ObservationIgnored private var stream: FSEventStreamRef?
     @ObservationIgnored private var agent: Agent
     @ObservationIgnored private var reply = ""
+    @ObservationIgnored private var tagged: String?
     @ObservationIgnored private var places: [URL: (NSRange, CGFloat)] = [:]
     @ObservationIgnored private var held: [Tell] = []
-    @ObservationIgnored private var proposedDoc: String?
+    @ObservationIgnored private var proposed = false
     @ObservationIgnored private var briefed: String?
-    @ObservationIgnored private var undone: Set<Int> = []
-    @ObservationIgnored private var captures: [Int: () -> Void] = [:]
     @ObservationIgnored lazy var keeper = VoiceKeeper(vault: vault, spec: spec)
     @ObservationIgnored let listener = Listener()
     @ObservationIgnored var turnStarted: CFAbsoluteTime = 0
@@ -69,8 +96,8 @@ final class Workspace {
 
     init(vault: URL) {
         self.vault = vault
-        mode = Mode(rawValue: UserDefaults.standard.string(forKey: "mode") ?? "") ?? .guided
-        let id = UserDefaults.standard.string(forKey: "agent") ?? "claude"
+        mode = Prefs.mode
+        let id = Prefs.agent
         agentID = id
         agent = AgentSpec.named(id).make()
         listener.onPartial = { [weak self] text in
@@ -89,9 +116,20 @@ final class Workspace {
     func checkAgents() {
         Task {
             for binary in Set(AgentSpec.all.compactMap(\.requires)) {
-                installed[binary] = await Quill.installed(binary)
+                installed[binary] = await Shell.find(binary) != nil
             }
         }
+    }
+
+    func attach(_ editor: QuillTextView, _ choreographer: Choreographer) {
+        self.editor = editor
+        self.choreographer = choreographer
+        editor.onReview = { [weak self, weak editor] in
+            guard let self, let editor, self.review != editor.review else { return }
+            self.review = editor.review
+        }
+        editor.onResolve = { [weak self] hunks, outcome in self?.resolved(hunks, outcome) }
+        editor.onUndo = { name, back in Ledger.event(back ? "undo" : "redo", detail: name) }
     }
 
     private func swapAgent() {
@@ -100,43 +138,65 @@ final class Workspace {
         briefed = nil
         agent.shutdown()
         agent = spec.make()
+        models = []
+        model = nil
         warm()
     }
 
     func warm() {
-        let agent = agent, vault = vault
-        Task { try? await agent.prepare(cwd: vault) }
+        let agent = agent
+        Task {
+            try? await agent.prepare(cwd: Self.desk, readable: voiceSources)
+            sync()
+        }
         Task { try? await listener.prepare() }
+    }
+
+    private func sync() {
+        if models != agent.models { models = agent.models }
+        if model != agent.model { model = agent.model }
+    }
+
+    func choose(model id: String) {
+        Prefs.setModel(id, for: agentID)
+        let agent = agent
+        Task {
+            do { try await agent.choose(model: id) } catch { fail(error.localizedDescription) }
+            sync()
+        }
     }
 
     func start() {
         try? FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: Self.desk, withIntermediateDirectories: true)
         refresh()
         watch()
         warm()
         checkAgents()
         keeper = VoiceKeeper(vault: vault, spec: spec)
-        let measured = UserDefaults.standard.double(forKey: "measuredAt")
-        if !FileManager.default.fileExists(atPath: keeper.url.path) || Date.now.timeIntervalSince1970 - measured > 86_400 {
+        if !FileManager.default.fileExists(atPath: keeper.url.path) || Date.now.timeIntervalSince1970 - Prefs.measuredAt > 86_400 {
             Task { await measure() }
         }
-        let last = UserDefaults.standard.string(forKey: "last").map { URL(fileURLWithPath: $0) }
+        let last = Prefs.last.map { URL(fileURLWithPath: $0) }
         if current == nil, let url = notes.first(where: { $0.url.path == last?.path })?.url ?? notes.first?.url { open(url) }
     }
 
     func switchVault(_ url: URL) {
         endTurn()
-        flushSave()
         leave()
         if let stream { FSEventStreamStop(stream); FSEventStreamInvalidate(stream); FSEventStreamRelease(stream) }
         stream = nil
         vault = url
-        UserDefaults.standard.set(url.path, forKey: "vault")
+        Prefs.vault = url.path
         current = nil
         editor?.text = ""
         agent.shutdown()
         agent = spec.make()
         start()
+    }
+
+    var title: String {
+        FileManager.default.displayName(atPath: vault.path)
     }
 
     func refresh() {
@@ -146,20 +206,19 @@ final class Workspace {
             .filter { $0.pathExtension.lowercased() == "md" }
             .map { url in Note(url: url, modified: (try? url.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast) }
             ?? []
-        notes = found.sorted { $0.modified > $1.modified }
+        let sorted = found.sorted { $0.modified > $1.modified }
+        if sorted != notes { notes = sorted }
     }
 
     func open(_ url: URL) {
         guard url != current else { return }
         endTurn()
-        choreographer?.land()
-        flushSave()
         leave()
         margin = []
         let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         current = url
-        UserDefaults.standard.set(url.path, forKey: "last")
-        base = text
+        if url.path.hasPrefix(vault.path) { Prefs.last = url.path }
+        saved = text
         editor?.text = text
         let (selection, y) = places[url] ?? (NSRange(location: 0, length: 0), 0)
         editor?.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
@@ -172,6 +231,9 @@ final class Workspace {
     }
 
     private func leave() {
+        choreographer?.land()
+        settleReview()
+        flushSave()
         guard let url = current, let editor else { return }
         places[url] = (editor.selectedRange(), editor.enclosingScrollView?.contentView.bounds.origin.y ?? 0)
         let name = url.deletingPathExtension().lastPathComponent
@@ -186,6 +248,14 @@ final class Workspace {
         guard !heading.isEmpty else { return }
         rename(Note(url: url, modified: .now), to: String(heading.prefix(80)))
         if let renamed = current, renamed != url { places[renamed] = places.removeValue(forKey: url) }
+    }
+
+    private func settleReview() {
+        guard let editor, !editor.review.isEmpty else { return }
+        let hunks = editor.review.hunks
+        editor.setReview(Review())
+        editor.undoManager?.removeAllActions()
+        resolved(hunks, .unreviewed)
     }
 
     func create() {
@@ -215,7 +285,8 @@ final class Workspace {
             try FileManager.default.moveItem(at: note.url, to: target)
             if current == note.url {
                 current = target
-                UserDefaults.standard.set(target.path, forKey: "last")
+                Prefs.last = target.path
+                transcript[target] = transcript.removeValue(forKey: note.url)
             }
             refresh()
             return nil
@@ -228,6 +299,7 @@ final class Workspace {
         if current == note.url {
             endTurn()
             choreographer?.land()
+            editor?.setReview(Review())
             current = nil
             editor?.text = ""
         }
@@ -246,7 +318,6 @@ final class Workspace {
             }
             if moved != margin { margin = moved }
         }
-        guard !inTurn else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(450))
@@ -256,89 +327,84 @@ final class Workspace {
     }
 
     func flushSave() {
-        guard saveTask != nil else { return }
         saveTask?.cancel()
-        saveTask = nil
         save()
     }
 
     private func save() {
         saveTask = nil
-        guard let url = current, let editor, !inTurn else { return }
-        let text = editor.string
-        guard text != base else { return }
+        guard let url = current, let editor else { return }
+        let text = editor.review.accepted(editor.string)
+        guard text != saved else { return }
         do {
             try text.write(to: url, atomically: true, encoding: .utf8)
-            base = text
+            saved = text
         } catch {
-            phase = .failed("Couldn't save \(url.lastPathComponent).")
+            fail("Couldn't save \(url.lastPathComponent).")
         }
     }
 
-    func reconcile() {
-        guard let url = current, let editor, let choreographer else { return }
-        guard let disk = try? String(contentsOf: url, encoding: .utf8), disk != base else { return }
-        if choreographer.isBusy {
-            guard settle == nil else { return }
-            settle = Task { [weak self] in
-                while self?.choreographer?.isBusy == true, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(60)) }
-                guard !Task.isCancelled else { return }
-                self?.settle = nil
-                self?.reconcile()
-            }
+    private func whenIdle(_ then: @escaping () -> Void) -> Bool {
+        guard choreographer?.isBusy == true else { return false }
+        guard settle == nil else { return true }
+        settle = Task { [weak self] in
+            while self?.choreographer?.isBusy == true, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(60)) }
+            guard !Task.isCancelled else { return }
+            self?.settle = nil
+            then()
+        }
+        return true
+    }
+
+    func reconcileVault() {
+        guard let url = current, let editor else { return }
+        guard let disk = try? String(contentsOf: url, encoding: .utf8), disk != saved else { return }
+        if whenIdle({ [weak self] in self?.reconcileVault() }) { return }
+        let changes = merge(base: saved, current: editor.string, proposed: disk)
+        saved = disk
+        choreographer?.play(changes, as: .other, turn: 0)
+    }
+
+    func reconcileDesk() {
+        guard busy, let file = deskFile, let editor else { return }
+        guard let disk = try? String(contentsOf: file, encoding: .utf8), disk != deskBase else { return }
+        if whenIdle({ [weak self] in self?.reconcileDesk() }) { return }
+        let (old, new) = changedParagraphs(base: deskBase, proposed: disk)
+        let bad = introducedTells(before: old, after: new, allowing: Prefs.ownTells)
+        if !bad.isEmpty, holding {
+            held += bad
+            try? deskBase.write(to: file, atomically: true, encoding: .utf8)
+            Ledger.event("held", detail: bad.map { "\($0.kind): \($0.phrase)" }.joined(separator: "; "))
             return
         }
-        propose(disk, editor: editor)
+        let flags = bad.map { "\($0.kind): “\($0.phrase.trimmingCharacters(in: .whitespaces))”" }
+        let changes = merge(base: deskBase, current: editor.string, proposed: disk)
+        deskBase = disk
+        proposed = true
+        guard !changes.isEmpty else { return }
+        if firstChangeAt == nil { firstChangeAt = CFAbsoluteTimeGetCurrent() }
+        phase = .applying(editor.review.turn(turn).count + changes.count)
+        choreographer?.play(changes, as: .agent(turn: turn, flags: flags), turn: turn)
     }
 
     var voiceSources: [URL] {
-        [vault] + (UserDefaults.standard.stringArray(forKey: "voiceSources") ?? []).map { URL(fileURLWithPath: $0) }.filter { $0 != vault }
+        [vault] + Prefs.voiceSources.map { URL(fileURLWithPath: $0) }.filter { $0 != vault }
     }
 
     @discardableResult
     func measure() async -> Fingerprint {
         let f = await keeper.measure(voiceSources)
-        UserDefaults.standard.set(f.punctuation["em dashes"] ?? 0, forKey: "emDash")
         refresh()
         return f
     }
 
-    private func propose(_ text: String, editor: QuillTextView) {
-        if inTurn, let url = current {
-            let (old, new) = changedParagraphs(base: base, proposed: text)
-            let bad = introducedTells(before: old, after: new, allowEmDash: UserDefaults.standard.double(forKey: "emDash") >= 2)
-            if !bad.isEmpty {
-                held += bad
-                try? editor.string.write(to: url, atomically: true, encoding: .utf8)
-                base = editor.string
-                Ledger.event("held", detail: bad.map { "\($0.kind): \($0.phrase)" }.joined(separator: "; "))
-                return
-            }
-            proposedDoc = text
-        }
-        let changes = merge(base: base, current: editor.string, proposed: text)
-        base = text
-        guard !changes.isEmpty else { return }
-        if firstChangeAt == nil { firstChangeAt = CFAbsoluteTimeGetCurrent() }
-        if inTurn { phase = .applying(changes.count) }
-        choreographer?.play(changes)
-    }
-
     func finishedPlaying(_ count: Int) {
-        if !inTurn {
-            if case .applying = phase { phase = .done(count) }
-            flushOrSave()
-        }
+        if !busy, case .applying = phase { phase = .done(review.hunks.count) }
     }
 
-    private func flushOrSave() {
-        saveTask?.cancel()
-        save()
-    }
-
-    func ask(_ words: String) {
+    func ask(_ words: String, mode override: Mode? = nil) {
         let words = words.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !words.isEmpty, let url = current, let editor, !inTurn else {
+        guard !words.isEmpty, let url = current, let editor, !busy else {
             if words.isEmpty { phase = .idle }
             return
         }
@@ -346,31 +412,41 @@ final class Workspace {
             let spec = spec
             Task { [weak self] in
                 guard let self else { return }
-                if let binary = spec.requires { installed[binary] = await Quill.installed(binary) }
+                if let binary = spec.requires { installed[binary] = await Shell.find(binary) != nil }
                 if available(spec) == false {
-                    let need = spec.requires == nil ? "an API key" : spec.requires == "npx" ? "Node" : "the \(spec.requires!) command"
-                    fail("\(spec.name) needs \(need). Install it, or choose another co-writer.", remedy: ("Choose…", { [weak self] in self?.showSettings() }))
+                    fail("\(spec.name) needs \(spec.need). Install it, or choose another co-writer.", remedy: ("Choose…", { [weak self] in self?.showSettings() }))
                 } else {
-                    ask(words)
+                    ask(words, mode: override)
                 }
             }
             return
         }
         choreographer?.land()
-        flushOrSave()
+        flushSave()
+        let mode = override ?? self.mode
         let text = editor.string
-        base = text
+        let title = url.deletingPathExtension().lastPathComponent
+        let fm = FileManager.default
+        for stale in (try? fm.contentsOfDirectory(at: Self.desk, includingPropertiesForKeys: nil)) ?? [] { try? fm.removeItem(at: stale) }
+        try? fm.createDirectory(at: Self.desk, withIntermediateDirectories: true)
+        let file = Self.desk.appending(path: "\(title).md")
+        do { try text.write(to: file, atomically: true, encoding: .utf8) } catch {
+            fail("Couldn't prepare a working copy of \(title).")
+            return
+        }
+        deskFile = file
+        deskBase = text
         let sel = editor.selectedRange()
         let selection = sel.length > 0 ? (text as NSString).substring(with: sel) : nil
-        let request = Request(words: words, path: url.path, text: text, selection: selection, mode: mode)
-        inTurn = true
+        let request = Request(words: words, title: title, path: file.path, text: text, selection: selection, mode: mode)
+        busy = true
         turn += 1
         let id = turn
-        editor.undoTag = id
+        asked[id] = Asked(note: url.lastPathComponent, request: words, mode: mode, agent: agentID)
         held = []
-        proposedDoc = nil
-        var retried = false
-        let before = text
+        holding = true
+        proposed = false
+        tagged = nil
         let voice = keeper.notes
         reply = ""
         margin = []
@@ -381,34 +457,36 @@ final class Workspace {
         Task {
             var failure: String?
             do {
-                try await agent.prepare(cwd: vault)
+                try await agent.prepare(cwd: Self.desk, readable: voiceSources)
+                sync()
                 guard turn == id else { return }
                 let brief = agent.conversation == nil || agent.conversation != briefed
-                var body = prompt(request, canEditFiles: agent.canEditFiles, voice: voice, briefing: brief ? Floor.text : nil)
+                var body = prompt(request, canEditFiles: agent.canEditFiles, voice: voice, briefing: brief ? editorialGuide : nil)
                 for attempt in 0..<2 {
-                    try await agent.send(body, base: self.editor?.string ?? text) { [weak self] event in
-                        guard let self, self.turn == id else { return }
+                    try await agent.send(body, file: file, base: deskBase) { event in
+                        guard self.turn == id else { return }
                         switch event {
                         case .activity(let a):
-                            if case .thinking = self.phase { self.phase = .thinking(a, words: words) }
+                            if case .thinking(_, let w) = self.phase { self.phase = .thinking(a, words: w) }
                         case .text(let t):
                             self.reply += t
                         case .proposed(let next):
-                            do {
-                                try next.write(to: url, atomically: true, encoding: .utf8)
-                                self.reconcile()
-                            } catch {
-                                self.phase = .failed("Couldn't save \(url.lastPathComponent).")
-                            }
+                            try? next.write(to: file, atomically: true, encoding: .utf8)
+                            self.reconcileDesk()
+                        case .notes(let json):
+                            self.tagged = json
                         }
                     }
                     guard turn == id else { return }
                     briefed = agent.conversation
                     try? await Task.sleep(for: .milliseconds(150))
-                    reconcile()
+                    reconcileDesk()
                     guard !held.isEmpty, attempt == 0 else { break }
-                    retried = true
-                    phase = .thinking("Revising", words: words)
+                    asked[id]?.held = held.map(\.phrase)
+                    asked[id]?.retried = true
+                    holding = false
+                    let phrases = Array(Set(held.map { "“\($0.phrase.trimmingCharacters(in: .whitespaces))”" })).prefix(2).joined(separator: " and ")
+                    phase = .thinking("Rewriting without \(phrases)", words: words)
                     reply = ""
                     body = retryPrompt(held, canEditFiles: agent.canEditFiles)
                     held = []
@@ -417,38 +495,45 @@ final class Workspace {
                 failure = error.localizedDescription
             }
             guard turn == id else { return }
-            await settleTurn(failure: failure, words: words)
-            record(id: id, note: url, request: words, before: before, retried: retried)
+            await settleTurn(id: id, url: url, failure: failure, words: words, mode: mode)
         }
     }
 
-    private func settleTurn(failure: String?, words: String) async {
-        reconcile()
+    private func settleTurn(id: Int, url: URL, failure: String?, words: String, mode: Mode) async {
+        reconcileDesk()
         while choreographer?.isBusy == true || settle != nil {
             try? await Task.sleep(for: .milliseconds(50))
         }
-        inTurn = false
-        flushOrSave()
+        busy = false
+        deskFile = nil
+        flushSave()
         let latency = firstChangeAt.map { $0 - turnStarted }
         Log.turn(words: words, agent: agentID, total: CFAbsoluteTimeGetCurrent() - turnStarted, firstChange: latency)
+        defer { close(id) }
         if let failure {
+            transcript[url, default: []].append(Line(words: words, reply: failure, failed: true))
             phase = .failed(failure)
             return
         }
         let said = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !held.isEmpty, proposedDoc == nil {
-            let phrases = Array(Set(held.map { "“\($0.phrase.trimmingCharacters(in: .whitespaces))”" })).prefix(2).joined(separator: " and ")
-            phase = .said("I held back an edit that used \(phrases). Ask again and I'll try another way.")
+        let pending = editor?.review.turn(id).count ?? 0
+        if mode == .notes, let editor,
+           let found = QuillCore.notes(from: tagged.map { "<notes>\($0)</notes>" } ?? said, in: editor.string), !found.isEmpty {
+            margin = found
+            let summary = found.count == 1 ? "One note in the margin." : "\(found.count) notes in the margin."
+            transcript[url, default: []].append(Line(words: words, reply: summary))
+            phase = .said(summary)
             return
         }
-        if mode == .notes, let editor, let found = QuillCore.notes(from: said, in: editor.string), !found.isEmpty {
-            margin = found
-            phase = .said(found.count == 1 ? "One note in the margin." : "\(found.count) notes in the margin.")
-        } else if case .applying(let n) = phase {
-            phase = said.isEmpty ? .done(n) : .said(said)
-        } else {
-            phase = said.isEmpty ? .done(0) : .said(said)
+        if asked[id]?.retried == true, !proposed {
+            let summary = said.isEmpty ? "I couldn't make that edit without breaking your rules. Try asking another way." : said
+            transcript[url, default: []].append(Line(words: words, reply: summary))
+            phase = .said(summary)
+            return
         }
+        let summary = said.isEmpty ? (pending == 0 ? "Nothing to change." : pending == 1 ? "1 change." : "\(pending) changes.") : said
+        transcript[url, default: []].append(Line(words: words, reply: summary))
+        phase = said.isEmpty ? .done(pending) : .said(said)
     }
 
     private func retryPrompt(_ tells: [Tell], canEditFiles: Bool) -> String {
@@ -456,46 +541,65 @@ final class Workspace {
         return """
         Quill did not apply your last edit. It introduced patterns the writer's editorial rules forbid:
         \(list)
-        The document is back to how it was before that edit. Make the edit again without these patterns, \(canEditFiles ? "editing the file directly" : "calling the edit tool"). Keep everything else the same. Then reply as before.
+        The working copy is back to how it was before that edit. Make the edit again without these patterns, \(canEditFiles ? "editing the file directly" : "calling the edit tool"). Keep everything else the same. Then reply as before.
         """
     }
 
-    private func record(id: Int, note: URL, request: String, before: String, retried: Bool) {
-        guard let proposed = proposedDoc else {
-            if !held.isEmpty || retried {
-                Ledger.append(TurnRecord(id: UUID().uuidString, at: .now, note: note.lastPathComponent, request: request, mode: mode.rawValue,
-                                         agent: agentID, held: held.map(\.phrase), retried: retried, exchanges: []), to: Ledger.turns)
-            }
-            return
+    private func resolved(_ hunks: [Hunk], _ outcome: Outcome) {
+        guard let editor, !hunks.isEmpty else { return }
+        let doc = NSString(string: editor.string)
+        for h in hunks {
+            guard asked[h.turn] != nil, NSMaxRange(h.range) <= doc.length else { continue }
+            var e = exchange(h, request: asked[h.turn]?.request ?? "", outcome: outcome, in: doc, at: h.range)
+            if outcome == .reverted || outcome == .undone { e.final = e.before }
+            asked[h.turn]?.exchanges.append(e)
         }
-        let held = held.map(\.phrase), mode = mode.rawValue, agent = agentID
-        let capture = { [weak self] in
-            guard let self else { return }
-            self.captures[id] = nil
-            let kept = self.current == note ? self.editor?.string ?? "" : (try? String(contentsOf: note, encoding: .utf8)) ?? ""
-            var found = exchanges(request: request, before: before, proposed: proposed, kept: kept)
-            if self.undone.contains(id) {
-                found = found.map { var e = $0; if e.outcome == .reverted { e.outcome = .undone }; return e }
-            }
-            Ledger.append(TurnRecord(id: UUID().uuidString, at: .now, note: note.lastPathComponent, request: request, mode: mode,
-                                     agent: agent, held: held, retried: retried, exchanges: found), to: Ledger.turns)
-            self.keeper.distillIfDue()
-        }
-        captures[id] = capture
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(60))
-            self?.captures[id]?()
+        Ledger.event(outcome.rawValue, detail: "\(hunks.count)")
+        for t in Set(hunks.map(\.turn)) where !(busy && t == turn) {
+            let left = editor.review.turn(t).filter { h in !hunks.contains { $0.id == h.id } }
+            if left.isEmpty { close(t, force: true) }
         }
     }
 
-    func undid(_ tag: Int) {
-        if undone.contains(tag) {
-            undone.remove(tag)
-            Ledger.event("redo", turn: String(tag))
-        } else {
-            undone.insert(tag)
-            Ledger.event("undo", turn: String(tag))
-        }
+    private func close(_ id: Int, force: Bool = false) {
+        guard let a = asked[id], force || editor?.review.turn(id).isEmpty ?? true else { return }
+        asked[id] = nil
+        guard !a.exchanges.isEmpty || !a.held.isEmpty || a.retried else { return }
+        Ledger.append(TurnRecord(id: a.id, at: .now, note: a.note, request: a.request, mode: a.mode.rawValue,
+                                 agent: a.agent, held: a.held, retried: a.retried, exchanges: a.exchanges), to: Ledger.turns)
+        if !a.exchanges.isEmpty { keeper.distillIfDue() }
+    }
+
+    func keep(_ hunks: [Hunk]? = nil) {
+        guard let editor else { return }
+        choreographer?.land()
+        editor.keep(hunks ?? editor.review.hunks)
+        if editor.review.isEmpty, case .done = phase { phase = .idle }
+    }
+
+    func revert(_ hunks: [Hunk]? = nil) {
+        guard let editor else { return }
+        choreographer?.land()
+        editor.revert(hunks ?? editor.review.hunks)
+        if editor.review.isEmpty, case .done = phase { phase = .idle }
+    }
+
+    var focused: Hunk? {
+        guard let editor else { return nil }
+        let sel = editor.selectedRange()
+        return editor.review.hunks.first { NSIntersectionRange($0.range, sel).length > 0 || NSLocationInRange(sel.location, $0.range) || sel.location == NSMaxRange($0.range) }
+    }
+
+    func step(_ forward: Bool) {
+        guard let editor, !editor.review.isEmpty else { return }
+        let at = editor.selectedRange().location
+        let hunks = editor.review.hunks
+        let next = forward
+            ? hunks.first { $0.range.location > at } ?? hunks.first
+            : hunks.last { NSMaxRange($0.range) < at } ?? hunks.last
+        guard let next else { return }
+        editor.setSelectedRange(NSRange(location: next.range.location, length: 0))
+        editor.scrollRangeToVisible(next.range)
     }
 
     func fail(_ message: String, remedy: (String, () -> Void)? = nil) {
@@ -505,45 +609,48 @@ final class Workspace {
 
     func cancelTurn() {
         if listener.isListening { listener.cancel() }
-        if inTurn { endTurn() } else { phase = .idle }
+        if busy { endTurn() } else { phase = .idle }
     }
 
     func endTurn() {
-        guard inTurn else { return }
+        guard busy else { return }
         agent.cancel()
+        let id = turn
         turn += 1
         settle?.cancel()
         settle = nil
         choreographer?.land()
-        reconcile()
-        choreographer?.land()
-        inTurn = false
+        busy = false
+        deskFile = nil
         phase = .idle
-        flushOrSave()
+        close(id)
+        flushSave()
     }
 
     func quit() {
-        for capture in Array(captures.values) { capture() }
         endTurn()
-        choreographer?.land()
-        flushSave()
         leave()
         agent.shutdown()
     }
 
     private func watch() {
-        let paths = [vault.path] as CFArray
+        let paths = [vault.path, Self.desk.path] as CFArray
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+        let callback: FSEventStreamCallback = { _, info, _, paths, _, _ in
             guard let info else { return }
             let ws = Unmanaged<Workspace>.fromOpaque(info).takeUnretainedValue()
+            let changed = (unsafeBitCast(paths, to: NSArray.self) as? [String]) ?? []
             MainActor.assumeIsolated {
-                ws.reconcile()
-                ws.refresh()
+                let desk = Workspace.desk.resolvingSymlinksInPath().path
+                if changed.contains(where: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path.hasPrefix(desk) }) { ws.reconcileDesk() }
+                if changed.contains(where: { !URL(fileURLWithPath: $0).resolvingSymlinksInPath().path.hasPrefix(desk) }) {
+                    ws.reconcileVault()
+                    ws.refresh()
+                }
             }
         }
-        guard let s = FSEventStreamCreate(nil, callback, &context, paths, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.03,
-                                          FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer))
+        let flags = kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagUseCFTypes
+        guard let s = FSEventStreamCreate(nil, callback, &context, paths, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.03, FSEventStreamCreateFlags(flags))
         else { return }
         FSEventStreamSetDispatchQueue(s, .main)
         FSEventStreamStart(s)

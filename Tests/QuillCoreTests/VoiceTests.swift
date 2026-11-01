@@ -9,7 +9,8 @@ import Testing
 
 @Test func chatbotAndContractionEdges() {
     #expect(tells(in: "Certainly! Here it is.").map(\.kind) == ["Chatbot artifact"])
-    #expect(tells(in: "It isn’t only fast, but cheap.").map(\.kind) == ["Negative parallelism"])
+    #expect(tells(in: "It isn’t just fast, but cheap.").map(\.kind) == ["Negative parallelism"])
+    #expect(tells(in: "It is not only cheaper but also faster.").isEmpty)
     #expect(tells(in: "I want just a bit more time, but fine.").isEmpty)
 }
 
@@ -22,7 +23,8 @@ import Testing
     let before = "I ship fast — sometimes too fast."
     #expect(introducedTells(before: before, after: "I ship fast — sometimes too fast, and I fix it later.").isEmpty)
     #expect(introducedTells(before: before, after: "I ship fast. Let's delve into why.").map(\.kind) == ["AI vocabulary"])
-    #expect(introducedTells(before: "a", after: "b — c", allowEmDash: true).isEmpty)
+    #expect(introducedTells(before: "a", after: "b — c", allowing: ["Em dash"]).isEmpty)
+    #expect(introducedTells(before: "a", after: "b — c").map(\.kind) == ["Em dash"])
 }
 
 @Test func changedParagraphsIsolateTheEdit() {
@@ -74,4 +76,10 @@ import Testing
     let drawing = "---\nexcalidraw-plugin: parsed\n---\n==⚠  Switch to EXCALIDRAW VIEW ==\nYou can decompress Drawing data with the command palette. For more info check plugin settings."
     #expect(!isWriting(drawing))
     #expect(fingerprint([drawing]).words == 0)
+}
+
+@Test func habitsComeFromTheWritersOwnProse() {
+    let notes = ["I ship fast — then fix it.", "Two things — speed and taste.", "One more — always one more."]
+    #expect(habitualTells(notes) == ["Em dash"])
+    #expect(habitualTells(["Just one — here."]).isEmpty)
 }

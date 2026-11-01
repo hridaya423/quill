@@ -12,11 +12,12 @@ extension Color {
 
 extension Font {
     static func serif(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .serif)
+        Brand.serif(size, weight)
     }
 }
 
 let enter = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.24)
+let morph = Animation.spring(duration: 0.38, bounce: 0.12)
 
 struct Pill: View {
     @Bindable var ws: Workspace
@@ -26,28 +27,43 @@ struct Pill: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 10) {
-            if chrome.choosingMode { ModeChooser(ws: ws, chrome: chrome).transition(.scale(scale: 0.96).combined(with: .opacity)) }
-            content
+        Group {
+            if let key = shown {
+                surface
+                    .id("pill")
+                    .animation(reduceMotion ? nil : morph, value: key)
+                    .transition(.asymmetric(insertion: .scale(scale: 0.94, anchor: .bottom).combined(with: .opacity),
+                                            removal: .opacity.animation(.easeOut(duration: 0.14))))
+            }
         }
-        .animation(enter, value: chrome.choosingMode)
-        .animation(chrome.commanding || reduceMotion ? nil : enter, value: key)
+        .animation(reduceMotion ? nil : enter, value: shown == nil)
         .padding(.bottom, 26)
         .frame(maxWidth: .infinity, alignment: .bottom)
     }
 
-    private var key: String {
+    private var pending: Int { ws.review.hunks.count }
+
+    private var shown: String? {
         if chrome.commanding { return "command" }
         if chrome.coach != nil, ws.phase == .idle { return "coach" }
         switch ws.phase {
-        case .idle: return chrome.hinting ? "hint" : "idle"
+        case .idle: return pending > 0 ? "review\(pending)" : chrome.hinting ? "hint" : nil
         case .listening: return "listening"
-        case .thinking: return "thinking"
-        case .applying: return "applying"
-        case .said(let s): return "said" + s
-        case .done: return "done"
+        case .thinking(let a, _): return "thinking" + a
+        case .applying(let n): return "applying\(n)"
+        case .said(let s): return "said" + s + "\(pending)"
+        case .done(let n): return "done\(n)\(pending)"
         case .failed(let s): return "failed" + s
         }
+    }
+
+    private var surface: some View {
+        content
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .frame(minHeight: 44)
+            .glassEffect(.regular, in: .rect(cornerRadius: 22))
+            .onHover { hovering = $0 }
     }
 
     @ViewBuilder
@@ -59,95 +75,93 @@ struct Pill: View {
         } else {
             switch ws.phase {
             case .idle:
-                if chrome.hinting { hint.transition(.opacity) }
+                if pending > 0 { reviewRow } else { hint }
             case .listening(let text):
-                capsule { listening(text) }
+                listening(text)
             case .thinking(let activity, let words):
-                capsule { thinking(activity, words) }
+                thinking(activity, words)
             case .applying(let n):
-                capsule { label(dot: .accentInk, n == 1 ? "Editing · 1 change" : "Editing · \(n) changes", pulse: true) }
+                label(n == 1 ? "Editing · 1 change" : "Editing · \(n) changes")
             case .said(let text):
                 said(text)
             case .done(let n):
-                capsule { done(n) }
-                    .task(id: key) { await dismiss(after: 3.4) }
+                done(n).task(id: shown) { await dismiss(after: 3.4) }
             case .failed(let message):
-                capsule { failed(message) }
-                    .task(id: key) { await dismiss(after: 9) }
+                failed(message)
             }
         }
     }
 
-    private func capsule<C: View>(@ViewBuilder _ c: () -> C) -> some View {
-        c()
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
-            .frame(maxWidth: 560)
-            .fixedSize(horizontal: true, vertical: true)
-            .glassEffect(.regular, in: .capsule)
-            .transition(.asymmetric(insertion: .scale(scale: 0.95).combined(with: .opacity), removal: .opacity.animation(.easeOut(duration: 0.14))))
-    }
-
     private func coach(_ source: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("YOUR FIRST EDIT").font(.system(size: 10, weight: .semibold)).tracking(1).foregroundStyle(Color.accentInk)
-            Text("This sentence is yours, from “\(source)”. Hold the right ⌥ key and say what you'd change.")
-                .font(.serif(16)).foregroundStyle(Color.ink).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("This sentence is yours, from “\(source)”. Hold \(Prefs.talkKey.label) and say what you'd change.")
+                .font(.serif(18)).foregroundStyle(Color.ink).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Button {
-                    ws.ask("Make this sentence say what I mean, in my voice.")
+                    ws.ask("Make this sentence say what I mean, in my voice.", mode: .guided)
                 } label: {
                     HStack(spacing: 8) {
-                        Text("Make it say what I mean").font(.system(size: 13, weight: .semibold))
-                        Text("⌘↩").font(.system(size: 11, weight: .medium)).opacity(0.6)
+                        Text("Make it say what I mean").font(.serif(17, .medium))
+                        Text("⌘↩").font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color(nsColor: Theme.paper))
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.accentInk))
+                    .padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.ink))
                 }
                 .buttonStyle(Press())
                 .keyboardShortcut(.return, modifiers: .command)
                 Text("or press ⌘K to type").font(.system(size: 12)).foregroundStyle(Color.soft)
             }
         }
-        .padding(18)
-        .frame(width: 420, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-        .transition(.asymmetric(insertion: .scale(scale: 0.96, anchor: .bottom).combined(with: .opacity), removal: .opacity))
+        .padding(.vertical, 4)
+        .frame(width: 400, alignment: .leading)
     }
 
     private var hint: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 6) { Keycap("right ⌥"); Text("hold to talk") }
+            HStack(spacing: 6) { Keycap(Prefs.talkKey.label); Text("hold to talk") }
             Text("·").foregroundStyle(Color.faint)
             HStack(spacing: 6) { Keycap("⌘K"); Text("type") }
         }
         .font(.system(size: 12))
         .foregroundStyle(Color.soft)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .glassEffect(.regular, in: .capsule)
-        .opacity(0.9)
+    }
+
+    private var reviewRow: some View {
+        HStack(spacing: 12) {
+            Circle().fill(Color.accentInk).frame(width: 7, height: 7)
+            Text(pending == 1 ? "1 change to review" : "\(pending) changes to review")
+                .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
+                .contentTransition(.numericText())
+            Text("·").foregroundStyle(Color.faint)
+            Button { ws.keep() } label: { HStack(spacing: 5) { Text("Keep all"); Keycap("⇧⌘↩") } }
+                .buttonStyle(.plain).foregroundStyle(Color.ink)
+            Button { ws.revert() } label: { HStack(spacing: 5) { Text("Revert all"); Keycap("⇧⌘⌫") } }
+                .buttonStyle(.plain).foregroundStyle(Color.soft)
+        }
+        .font(.system(size: 12.5))
+        .fixedSize()
     }
 
     private func listening(_ text: String) -> some View {
         HStack(spacing: 12) {
             Waveform(level: ws.level)
             Text(text.isEmpty ? "Listening…" : text)
-                .font(.serif(15))
+                .font(.serif(17))
                 .foregroundStyle(text.isEmpty ? Color.soft : Color.ink)
                 .lineLimit(1)
                 .truncationMode(.head)
                 .frame(maxWidth: 440, alignment: .leading)
                 .contentTransition(.opacity)
         }
+        .fixedSize()
     }
 
     private func thinking(_ activity: String, _ words: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("“\(words)”")
-                .font(.serif(13).italic())
+                .font(.serif(15).italic())
                 .foregroundStyle(Color.soft)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -157,33 +171,40 @@ struct Pill: View {
                 Shimmer(text: activity)
             }
         }
+        .fixedSize()
     }
 
-    private func label(dot: Color, _ text: String, pulse: Bool = false) -> some View {
+    private func label(_ text: String) -> some View {
         HStack(spacing: 9) {
-            if pulse { Orb() } else { Circle().fill(dot).frame(width: 7, height: 7) }
+            Orb()
             Text(text).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
         }
+        .fixedSize()
     }
 
     private func done(_ n: Int) -> some View {
         HStack(spacing: 10) {
-            Circle().fill(Color.greenInk).frame(width: 7, height: 7)
+            Circle().fill(n == 0 ? Color.soft : Color.accentInk).frame(width: 7, height: 7)
             Text(n == 0 ? "Nothing to change" : n == 1 ? "1 change" : "\(n) changes")
                 .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
-            if n > 0 {
+            if pending > 0 {
                 Text("·").foregroundStyle(Color.faint)
+                HStack(spacing: 5) { Keycap("⌘↩"); Text("keep") }
+                HStack(spacing: 5) { Keycap("⌘⌫"); Text("revert") }
                 HStack(spacing: 5) { Keycap("⌘Z"); Text("undo") }
-                    .font(.system(size: 12)).foregroundStyle(Color.soft)
             }
         }
+        .font(.system(size: 12))
+        .foregroundStyle(Color.soft)
+        .fixedSize()
     }
 
     private func failed(_ message: String) -> some View {
         HStack(spacing: 10) {
             Circle().fill(Color.redInk).frame(width: 7, height: 7)
-            Text(message).font(.system(size: 13)).foregroundStyle(Color.ink).lineLimit(2).frame(maxWidth: 420, alignment: .leading)
+            Text(message).font(.system(size: 13)).foregroundStyle(Color.ink).lineLimit(3).frame(maxWidth: 420, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
             if let remedy = ws.remedy {
                 Button(remedy.label) {
                     remedy.action()
@@ -195,68 +216,84 @@ struct Pill: View {
             }
             Button { ws.phase = .idle } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
                 .buttonStyle(.plain).foregroundStyle(Color.soft)
+                .help("Dismiss (esc)")
         }
     }
 
     private func said(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Circle().fill(Color.accentInk).frame(width: 7, height: 7).padding(.top, 8)
-            Text(text)
-                .font(.serif(15))
-                .foregroundStyle(Color.ink)
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .frame(maxWidth: 480, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-            Button { ws.phase = .idle } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
-                .buttonStyle(.plain).foregroundStyle(Color.soft).padding(.top, 5)
-                .opacity(hovering ? 1 : 0.4)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Circle().fill(Color.accentInk).frame(width: 7, height: 7).padding(.top, 8)
+                Text(text)
+                    .font(.serif(17))
+                    .foregroundStyle(Color.ink)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: 480, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { ws.phase = .idle } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
+                    .buttonStyle(.plain).foregroundStyle(Color.soft).padding(.top, 5)
+                    .opacity(hovering ? 1 : 0.4)
+            }
+            if pending > 0 { reviewRow.padding(.leading, 19) }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 13)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
-        .onHover { hovering = $0 }
-        .transition(.asymmetric(insertion: .scale(scale: 0.96, anchor: .bottom).combined(with: .opacity), removal: .opacity.animation(.easeOut(duration: 0.14))))
-        .task(id: key) {
+        .padding(.vertical, 1)
+        .task(id: shown) {
             let words = Double(text.split(separator: " ").count)
             await dismiss(after: max(5, words * 0.32 + 2.5))
         }
     }
 
+    private var lines: [Line] {
+        ws.current.flatMap { ws.transcript[$0] }.map { Array($0.suffix(3)) } ?? []
+    }
+
     private var command: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "sparkle").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.accentInk)
-            if chrome.selectedWords > 0 {
-                Text(chrome.selectedWords == 1 ? "1 word" : "\(chrome.selectedWords) words")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.accentInk)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2.5)
-                    .background(Capsule().fill(Color.accentInk.opacity(0.12)))
-                    .help("Your request is about the selected text")
-            }
-            TextField(chrome.selectedWords > 0 ? "Ask about the selection…" : "Ask Quill to change or check something…", text: $chrome.draft)
-                .textFieldStyle(.plain)
-                .font(.serif(16))
-                .foregroundStyle(Color.ink)
-                .focused($focused)
-                .frame(width: chrome.selectedWords > 0 ? 380 : 440)
-                .onSubmit {
-                    let words = chrome.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !words.isEmpty else { return }
-                    chrome.draft = ""
-                    chrome.commanding = false
-                    chrome.remember(words)
-                    ws.ask(words)
+        VStack(alignment: .leading, spacing: 10) {
+            if !lines.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(lines) { line in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(line.words).font(.system(size: 12)).foregroundStyle(Color.soft).lineLimit(1)
+                            Text(line.reply).font(.serif(15)).foregroundStyle(line.failed ? Color.redInk : Color.ink)
+                                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
-                .onKeyPress(.upArrow) { step(-1) }
-                .onKeyPress(.downArrow) { step(1) }
-                .onExitCommand { chrome.commanding = false }
-            Keycap("↩").opacity(chrome.draft.isEmpty ? 0.4 : 1)
+                .frame(width: 470, alignment: .leading)
+                Divider().opacity(0.5)
+            }
+            HStack(spacing: 10) {
+                Image(systemName: "sparkle").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.accentInk)
+                if chrome.selectedWords > 0 {
+                    Text(chrome.selectedWords == 1 ? "1 word" : "\(chrome.selectedWords) words")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentInk)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2.5)
+                        .background(Capsule().fill(Color.accentInk.opacity(0.12)))
+                        .help("Your request is about the selected text")
+                }
+                TextField(chrome.selectedWords > 0 ? "Ask about the selection…" : "Ask Quill to change or check something…", text: $chrome.draft)
+                    .textFieldStyle(.plain)
+                    .font(.serif(18))
+                    .foregroundStyle(Color.ink)
+                    .focused($focused)
+                    .frame(width: chrome.selectedWords > 0 ? 380 : 440)
+                    .onSubmit {
+                        let words = chrome.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !words.isEmpty else { return }
+                        chrome.draft = ""
+                        chrome.commanding = false
+                        chrome.remember(words)
+                        ws.ask(words)
+                    }
+                    .onKeyPress(.upArrow) { step(-1) }
+                    .onKeyPress(.downArrow) { step(1) }
+                    .onExitCommand { chrome.commanding = false }
+                Keycap("↩").opacity(chrome.draft.isEmpty ? 0.4 : 1)
+            }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .glassEffect(.regular, in: .capsule)
         .onAppear { focused = true }
     }
 
@@ -280,7 +317,7 @@ struct Pill: View {
         try? await Task.sleep(for: .seconds(seconds))
         while hovering { try? await Task.sleep(for: .milliseconds(300)) }
         guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.16)) { ws.phase = .idle }
+        withAnimation(morph) { ws.phase = .idle }
     }
 }
 
@@ -362,50 +399,6 @@ struct Shimmer: View {
     }
 }
 
-struct ModeChooser: View {
-    @Bindable var ws: Workspace
-    @Bindable var chrome: Chrome
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("How should Quill answer you?")
-                .font(.serif(16, .semibold)).foregroundStyle(Color.ink)
-            HStack(spacing: 10) {
-                option(.guided, "Guided", "Edits land in the text while you watch")
-                option(.notes, "Notes", "Thoughts in the margin. Edits when you ask")
-            }
-            Text("Change it any time from the Agent menu. Your voice notes live in Voice.md.")
-                .font(.system(size: 11.5)).foregroundStyle(Color.soft)
-        }
-        .padding(18)
-        .frame(width: 440)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-    }
-
-    private func option(_ mode: Mode, _ title: String, _ detail: String) -> some View {
-        Button {
-            ws.mode = mode
-            UserDefaults.standard.set(true, forKey: "choseMode")
-            chrome.choosingMode = false
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(title).font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    if ws.mode == mode { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.accentInk) }
-                }
-                Text(detail).font(.system(size: 12)).foregroundStyle(Color.soft).fixedSize(horizontal: false, vertical: true)
-            }
-            .foregroundStyle(Color.ink)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.ink.opacity(ws.mode == mode ? 0.07 : 0.03)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(Press())
-    }
-}
-
 struct Press: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -417,6 +410,7 @@ struct Press: ButtonStyle {
 struct NoteCard: View {
     var note: MarginNote
     var active: Bool
+    var busy: Bool
     var apply: () -> Void
     var dismiss: () -> Void
     var hover: (Bool) -> Void
@@ -431,12 +425,14 @@ struct NoteCard: View {
                     .foregroundStyle(Color.accentInk.opacity(0.8))
             }
             Text(note.note)
-                .font(.system(size: 12.5))
+                .font(.serif(14.5))
                 .foregroundStyle(Color.ink.opacity(0.88))
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
                 Button("Apply", action: apply).foregroundStyle(Color.accentInk)
+                    .disabled(busy)
+                    .help(busy ? "Wait for the current request to finish" : "Ask Quill to make this edit")
                 Button("Dismiss", action: dismiss).foregroundStyle(Color.soft)
             }
             .font(.system(size: 11.5, weight: .medium))
@@ -451,5 +447,52 @@ struct NoteCard: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0; hover($0) }
         .animation(.easeOut(duration: 0.15), value: hovering || active)
+    }
+}
+
+struct ChangeCard: View {
+    var hunk: Hunk
+    var keep: () -> Void
+    var revert: () -> Void
+    var hover: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if hunk.old.isEmpty {
+                Text("Added by Quill").font(.system(size: 11, weight: .medium)).foregroundStyle(Color.soft)
+            } else {
+                Text(hunk.old)
+                    .font(.serif(15))
+                    .strikethrough(true, color: Color.redInk.opacity(0.7))
+                    .foregroundStyle(Color.soft)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(hunk.flags, id: \.self) { flag in
+                Label(flag, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color.redInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 12) {
+                Button(action: keep) { HStack(spacing: 5) { Text("Keep"); Keycap("⌘↩") } }
+                    .foregroundStyle(Color.ink)
+                Button(action: revert) { HStack(spacing: 5) { Text("Revert"); Keycap("⌘⌫") } }
+                    .foregroundStyle(Color.soft)
+            }
+            .font(.system(size: 12, weight: .medium))
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: 360, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: true)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(nsColor: Theme.paper))
+            .shadow(color: .black.opacity(0.14), radius: 12, y: 5))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.faint.opacity(0.7), lineWidth: 0.5))
+        .padding(12)
+        .onHover(perform: hover)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(hunk.old.isEmpty ? "Added text" : "Replaced: \(hunk.old)")
     }
 }

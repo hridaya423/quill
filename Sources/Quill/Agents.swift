@@ -5,6 +5,7 @@ enum AgentEvent {
     case activity(String)
     case text(String)
     case proposed(String)
+    case notes(String)
 }
 
 struct AgentError: LocalizedError {
@@ -12,62 +13,130 @@ struct AgentError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+struct ModelChoice: Hashable, Identifiable {
+    var id: String
+    var name: String
+}
+
 @MainActor
 protocol Agent: AnyObject {
     var canEditFiles: Bool { get }
     var conversation: String? { get }
-    func prepare(cwd: URL) async throws
-    func send(_ prompt: String, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws
+    var model: ModelChoice? { get }
+    var models: [ModelChoice] { get }
+    func prepare(cwd: URL, readable: [URL]) async throws
+    func choose(model: String) async throws
+    func send(_ prompt: String, file: URL?, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws
     func cancel()
     func shutdown()
 }
 
 struct AgentSpec: Identifiable, Hashable {
-    enum Kind: Hashable { case acp(String), codex, anthropic }
+    enum Kind: Hashable { case acp([String]), codex([String]), anthropic }
     var id: String
     var name: String
     var detail: String
     var kind: Kind
-    var requires: String?
+    var defaultModel: String?
 
     static let all: [AgentSpec] = [
         AgentSpec(id: "claude", name: "Claude Code", detail: "Your Claude subscription, through Claude Code",
-                  kind: .acp("npx -y @agentclientprotocol/claude-agent-acp@0.99.1"), requires: "npx"),
+                  kind: .acp(["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.99.1"]), defaultModel: "opus"),
         AgentSpec(id: "codex", name: "Codex", detail: "Your ChatGPT subscription, through the Codex CLI",
-                  kind: .codex, requires: "codex"),
-        AgentSpec(id: "anthropic", name: "Anthropic API", detail: "Claude Opus 5.5 with your API key",
-                  kind: .anthropic, requires: nil),
+                  kind: .codex(["codex", "app-server"])),
+        AgentSpec(id: "anthropic", name: "Anthropic API", detail: "Claude with your API key",
+                  kind: .anthropic, defaultModel: "claude-opus-5-5"),
         AgentSpec(id: "gemini", name: "Gemini CLI", detail: "Google's agent over ACP",
-                  kind: .acp("gemini --experimental-acp"), requires: "gemini"),
+                  kind: .acp(["gemini", "--experimental-acp"])),
         AgentSpec(id: "opencode", name: "OpenCode", detail: "Any model OpenCode is signed in to",
-                  kind: .acp("opencode acp"), requires: "opencode"),
+                  kind: .acp(["opencode", "acp"])),
     ]
 
     static func named(_ id: String) -> AgentSpec { all.first { $0.id == id } ?? all[0] }
 
-    @MainActor func make() -> Agent {
+    var requires: String? {
         switch kind {
-        case .acp(let command): ACPAgent(command: command)
-        case .codex: CodexAgent()
-        case .anthropic: AnthropicAgent()
+        case .acp(let argv), .codex(let argv): argv.first
+        case .anthropic: nil
+        }
+    }
+
+    var missing: String {
+        switch requires {
+        case nil: "Needs a key"
+        case "npx": "Needs Node"
+        default: "Not installed"
+        }
+    }
+
+    var need: String {
+        switch requires {
+        case nil: "an API key"
+        case "npx": "Node"
+        case let binary?: "the \(binary) command"
+        }
+    }
+
+    @MainActor func make() -> Agent {
+        let preferred = Prefs.model(id) ?? defaultModel
+        return switch kind {
+        case .acp(let argv): ACPAgent(argv: argv, preferred: preferred)
+        case .codex(let argv): CodexAgent(argv: argv, preferred: preferred)
+        case .anthropic: AnthropicAgent(model: preferred ?? "claude-opus-5-5")
         }
     }
 }
 
-func loginShell(_ command: String) -> Process {
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    p.arguments = ["-lc", command]
-    return p
-}
+@MainActor
+enum Shell {
+    private static var resolving: Task<String, Never>?
 
-func installed(_ binary: String) async -> Bool {
-    await withCheckedContinuation { done in
-        let p = loginShell("command -v \(binary)")
-        p.standardOutput = FileHandle.nullDevice
+    static func path() async -> String {
+        if let resolving { return await resolving.value }
+        let task = Task.detached { loginPath() }
+        resolving = task
+        return await task.value
+    }
+
+    nonisolated private static func loginPath() -> String {
+        let inherited = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        let fallback = inherited + ":/opt/homebrew/bin:/usr/local/bin:" + NSHomeDirectory() + "/.local/bin"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+        p.arguments = ["-ilc", "printf '\\n__QUILL_PATH__%s\\n' \"$PATH\""]
+        let out = Pipe()
+        p.standardOutput = out
         p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { done.resume(returning: $0.terminationStatus == 0) }
-        do { try p.run() } catch { done.resume(returning: false) }
+        p.standardInput = FileHandle.nullDevice
+        do { try p.run() } catch { return fallback }
+        let deadline = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: deadline)
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        deadline.cancel()
+        let marker = "__QUILL_PATH__"
+        guard let line = String(decoding: data, as: UTF8.self).split(separator: "\n").last(where: { $0.hasPrefix(marker) }) else { return fallback }
+        return String(line.dropFirst(marker.count))
+    }
+
+    static func find(_ binary: String) async -> URL? {
+        if binary.hasPrefix("/") { return FileManager.default.isExecutableFile(atPath: binary) ? URL(fileURLWithPath: binary) : nil }
+        for dir in await path().split(separator: ":") {
+            let url = URL(fileURLWithPath: String(dir)).appending(path: binary)
+            if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+        }
+        return nil
+    }
+
+    static func process(_ argv: [String], cwd: URL) async -> Process {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = argv
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = await path()
+        p.environment = env
+        p.currentDirectoryURL = cwd
+        return p
     }
 }
 
@@ -96,9 +165,8 @@ final class RPC {
         return h
     }()
 
-    init(command: String, cwd: URL) throws {
-        process = loginShell("exec \(command)")
-        process.currentDirectoryURL = cwd
+    init(_ process: Process) throws {
+        self.process = process
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         process.standardInput = stdin
         process.standardOutput = stdout
@@ -195,22 +263,57 @@ func inside(_ path: String, _ root: URL) -> Bool {
     return target == base || target.hasPrefix(base + "/")
 }
 
+func same(_ path: String, _ file: URL) -> Bool {
+    URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path == file.standardizedFileURL.resolvingSymlinksInPath().path
+}
+
+func permits(kind: String, paths: [String], file: URL?, readable: [URL]) -> Bool {
+    switch kind {
+    case "think", "fetch":
+        return true
+    case "read", "search":
+        return !paths.isEmpty && paths.allSatisfy { p in (file.map { same(p, $0) } ?? false) || readable.contains { inside(p, $0) } }
+    case "edit":
+        guard let file else { return false }
+        return !paths.isEmpty && paths.allSatisfy { same($0, file) }
+    default:
+        return false
+    }
+}
+
+func choices(from configOptions: Any?, id: String) -> (current: String?, options: [ModelChoice]) {
+    guard let option = (configOptions as? [[String: Any]])?.first(where: { $0["id"] as? String == id }) else { return (nil, []) }
+    let flat = (option["options"] as? [[String: Any]] ?? []).flatMap { o in (o["options"] as? [[String: Any]]) ?? [o] }
+    let options = flat.compactMap { o -> ModelChoice? in
+        guard let value = o["value"] as? String, let name = o["name"] as? String else { return nil }
+        return ModelChoice(id: value, name: value == "default" ? (o["description"] as? String).map { "\($0) (default)" } ?? name : name)
+    }
+    return (option["currentValue"] as? String, options)
+}
+
 @MainActor
 final class ACPAgent: Agent {
-    let command: String
+    let argv: [String]
     let canEditFiles = true
     var conversation: String? { session }
+    private(set) var model: ModelChoice?
+    private(set) var models: [ModelChoice] = []
+    private var preferred: String?
     private var rpc: RPC?
     private var session: String?
     private var cwd: URL?
+    private var readable: [URL] = []
+    private var file: URL?
     private var starting: Task<Void, Error>?
     private var events: (@MainActor (AgentEvent) -> Void)?
 
-    init(command: String) {
-        self.command = command
+    init(argv: [String], preferred: String?) {
+        self.argv = argv
+        self.preferred = preferred
     }
 
-    func prepare(cwd: URL) async throws {
+    func prepare(cwd: URL, readable: [URL]) async throws {
+        self.readable = readable
         if session != nil, self.cwd == cwd, rpc?.running == true { return }
         if let starting { return try await starting.value }
         let task = Task { try await self.boot(cwd: cwd) }
@@ -221,7 +324,7 @@ final class ACPAgent: Agent {
 
     private func boot(cwd: URL) async throws {
         rpc?.stop()
-        let rpc = try RPC(command: command, cwd: cwd)
+        let rpc = try RPC(await Shell.process(argv, cwd: cwd))
         self.rpc = rpc
         self.cwd = cwd
         rpc.onRequest = { [weak self] method, params in self?.answer(method, params) ?? [:] }
@@ -232,19 +335,45 @@ final class ACPAgent: Agent {
         _ = try await rpc.request("initialize", [
             "protocolVersion": 1,
             "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": true], "terminal": false],
-            "clientInfo": ["name": "Quill", "version": "0.1"],
+            "clientInfo": ["name": "Quill", "version": "0.2"],
         ])
         let created = try await rpc.request("session/new", ["cwd": cwd.path, "mcpServers": []])
         guard let id = created["sessionId"] as? String else { throw AgentError(message: "The agent didn't open a session.") }
         session = id
+        adopt(created["configOptions"])
+        if let preferred, model?.id != preferred, models.contains(where: { $0.id == preferred }) {
+            try? await set("model", preferred)
+        }
+        if choices(from: created["configOptions"], id: "effort").options.contains(where: { $0.id == "low" }) {
+            try? await set("effort", "low")
+        }
     }
 
-    func send(_ prompt: String, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
+    private func adopt(_ configOptions: Any?) {
+        let found = choices(from: configOptions, id: "model")
+        guard !found.options.isEmpty else { return }
+        models = found.options
+        model = found.options.first { $0.id == found.current }
+    }
+
+    private func set(_ config: String, _ value: String) async throws {
+        guard let rpc, let session else { return }
+        let result = try await rpc.request("session/set_config_option", ["sessionId": session, "configId": config, "value": value])
+        adopt(result["configOptions"])
+    }
+
+    func choose(model value: String) async throws {
+        preferred = value
+        try await set("model", value)
+    }
+
+    func send(_ prompt: String, file: URL?, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
         guard let cwd else { throw AgentError(message: "The agent isn't ready yet.") }
-        try await prepare(cwd: cwd)
+        try await prepare(cwd: cwd, readable: readable)
         guard let session, let rpc else { throw AgentError(message: "The agent isn't ready yet.") }
+        self.file = file
         self.events = events
-        defer { self.events = nil }
+        defer { self.events = nil; self.file = nil }
         let result = try await rpc.request("session/prompt", ["sessionId": session, "prompt": [["type": "text", "text": prompt]]])
         if result["stopReason"] as? String == "refusal" {
             throw AgentError(message: "The agent declined that one.")
@@ -261,12 +390,11 @@ final class ACPAgent: Agent {
         session = nil
     }
 
-    private func answer(_ method: String, _ params: [String: Any]) -> [String: Any] {
-        guard let cwd else { return ["error": ["code": -32000, "message": "No folder is open."]] }
+    func answer(_ method: String, _ params: [String: Any]) -> [String: Any] {
         switch method {
         case "fs/write_text_file":
-            guard let path = params["path"] as? String, let content = params["content"] as? String, inside(path, cwd) else {
-                return ["error": ["code": -32000, "message": "Quill only lets agents write inside the open folder."]]
+            guard let path = params["path"] as? String, let content = params["content"] as? String, let file, same(path, file) else {
+                return ["error": ["code": -32000, "message": "Quill only lets the agent write its working copy of the note."]]
             }
             do {
                 try content.write(toFile: path, atomically: true, encoding: .utf8)
@@ -277,12 +405,11 @@ final class ACPAgent: Agent {
         case "session/request_permission":
             let options = params["options"] as? [[String: Any]] ?? []
             let call = params["toolCall"] as? [String: Any] ?? [:]
-            let kind = call["kind"] as? String ?? "other"
             let locations = call["locations"] as? [[String: Any]] ?? []
             let paths = locations.compactMap { $0["path"] as? String }
-            let inVault = !paths.isEmpty && paths.count == locations.count && paths.allSatisfy { inside($0, cwd) }
-            let safe = ["think", "fetch"].contains(kind) || (["read", "edit", "search"].contains(kind) && inVault)
-            let option = safe
+            let allowed = paths.count == locations.count
+                && permits(kind: call["kind"] as? String ?? "other", paths: paths, file: file, readable: readable)
+            let option = allowed
                 ? options.first { $0["kind"] as? String == "allow_once" }
                 : options.first { ($0["kind"] as? String)?.hasPrefix("reject") == true }
             guard let id = option?["optionId"] else { return ["result": ["outcome": ["outcome": "cancelled"]]] }
@@ -293,15 +420,16 @@ final class ACPAgent: Agent {
     }
 
     private func notify(_ update: [String: Any]) {
-        guard let events else { return }
         switch update["sessionUpdate"] as? String {
+        case "config_option_update":
+            adopt(update["configOptions"])
         case "agent_message_chunk":
-            if let content = update["content"] as? [String: Any], let text = content["text"] as? String { events(.text(text)) }
+            if let content = update["content"] as? [String: Any], let text = content["text"] as? String { events?(.text(text)) }
         case "agent_thought_chunk":
-            events(.activity("Thinking"))
+            events?(.activity("Thinking"))
         case "tool_call":
             let file = (update["locations"] as? [[String: Any]])?.first?["path"] as? String
-            events(.activity(activity(update["kind"] as? String, file: file, title: update["title"] as? String)))
+            events?(.activity(activity(update["kind"] as? String, file: file, title: update["title"] as? String)))
         default:
             break
         }
@@ -321,8 +449,11 @@ func activity(_ kind: String?, file: String?, title: String?) -> String {
 
 @MainActor
 final class CodexAgent: Agent {
+    let argv: [String]
     let canEditFiles = true
     var conversation: String? { thread }
+    private(set) var models: [ModelChoice] = []
+    private var preferred: String?
     private var rpc: RPC?
     private var thread: String?
     private var turn: String?
@@ -330,8 +461,16 @@ final class CodexAgent: Agent {
     private var starting: Task<Void, Error>?
     private var events: (@MainActor (AgentEvent) -> Void)?
     private var finished: CheckedContinuation<Void, Error>?
+    private var current: String?
 
-    func prepare(cwd: URL) async throws {
+    init(argv: [String], preferred: String?) {
+        self.argv = argv
+        self.preferred = preferred
+    }
+
+    var model: ModelChoice? { models.first { $0.id == (preferred ?? current) } }
+
+    func prepare(cwd: URL, readable: [URL]) async throws {
         if thread != nil, self.cwd == cwd, rpc?.running == true { return }
         if let starting { return try await starting.value }
         let task = Task { try await self.boot(cwd: cwd) }
@@ -342,7 +481,7 @@ final class CodexAgent: Agent {
 
     private func boot(cwd: URL) async throws {
         rpc?.stop()
-        let rpc = try RPC(command: "codex app-server", cwd: cwd)
+        let rpc = try RPC(await Shell.process(argv, cwd: cwd))
         self.rpc = rpc
         self.cwd = cwd
         rpc.onRequest = { method, _ in
@@ -353,30 +492,42 @@ final class CodexAgent: Agent {
             self?.thread = nil
             self?.finish(AgentError(message: "Codex stopped. Check that it's installed and signed in."))
         }
-        _ = try await rpc.request("initialize", ["clientInfo": ["name": "quill", "title": "Quill", "version": "0.1"]])
+        _ = try await rpc.request("initialize", ["clientInfo": ["name": "quill", "title": "Quill", "version": "0.2"]])
         rpc.notify("initialized")
-        let started = try await rpc.request("thread/start", [
-            "cwd": cwd.path, "sandbox": "workspace-write", "approvalPolicy": "never", "ephemeral": true,
-        ])
+        if let listed = try? await rpc.request("model/list", [:]), let data = listed["data"] as? [[String: Any]] {
+            models = data.compactMap { m in
+                guard let id = m["id"] as? String else { return nil }
+                if m["isDefault"] as? Bool == true { current = id }
+                return ModelChoice(id: id, name: m["displayName"] as? String ?? id)
+            }
+        }
+        var params: [String: Any] = ["cwd": cwd.path, "sandbox": "workspace-write", "approvalPolicy": "never", "ephemeral": true]
+        if let preferred { params["model"] = preferred }
+        let started = try await rpc.request("thread/start", params)
         guard let id = (started["thread"] as? [String: Any])?["id"] as? String else {
             throw AgentError(message: "Codex didn't open a thread.")
         }
+        if let used = started["model"] as? String { current = used }
         thread = id
     }
 
-    func send(_ prompt: String, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
+    func choose(model value: String) async throws {
+        preferred = value
+    }
+
+    func send(_ prompt: String, file: URL?, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
         guard let cwd else { throw AgentError(message: "Codex isn't ready yet.") }
-        try await prepare(cwd: cwd)
+        try await prepare(cwd: cwd, readable: [])
         guard let thread, let rpc else { throw AgentError(message: "Codex isn't ready yet.") }
         self.events = events
         defer { self.events = nil; turn = nil }
+        var params: [String: Any] = ["threadId": thread, "effort": "low", "input": [["type": "text", "text": prompt]]]
+        if let preferred { params["model"] = preferred }
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             finished = c
             Task {
                 do {
-                    let r = try await rpc.request("turn/start", [
-                        "threadId": thread, "effort": "low", "input": [["type": "text", "text": prompt]],
-                    ])
+                    let r = try await rpc.request("turn/start", params)
                     turn = (r["turn"] as? [String: Any])?["id"] as? String
                 } catch {
                     finish(error)
@@ -438,120 +589,19 @@ enum Keychain {
 
     static func write(_ account: String, _ value: String) {
         let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "Quill", kSecAttrAccount as String: account]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        var add = base
-        add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
+        guard !value.isEmpty else {
+            SecItemDelete(base as CFDictionary)
+            return
+        }
+        let data = Data(value.utf8)
+        if SecItemUpdate(base as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+            var add = base
+            add[kSecValueData as String] = data
+            SecItemAdd(add as CFDictionary, nil)
+        }
     }
 
     static var anthropicKey: String? {
         read("anthropic") ?? ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
-    }
-}
-
-@MainActor
-final class AnthropicAgent: Agent {
-    let canEditFiles = false
-    let conversation: String? = nil
-    private var previous: String?
-
-    func prepare(cwd: URL) async throws {}
-
-    func cancel() {}
-
-    func shutdown() {}
-
-    func send(_ prompt: String, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
-        guard let key = Keychain.anthropicKey, !key.isEmpty else {
-            throw AgentError(message: "Add your Anthropic API key in Settings.")
-        }
-        var text = prompt
-        if let previous { text = "Earlier in this session:\n\(previous)\n\n" + text }
-        let body: [String: Any] = [
-            "model": "claude-opus-5-5",
-            "max_tokens": 64000,
-            "stream": true,
-            "output_config": ["effort": "low"],
-            "fallbacks": "default",
-            "system": "You work inside a text editor. When you change the document, write your one-sentence reply first, then call edit_document exactly once with every edit.",
-            "tools": [[
-                "name": "edit_document",
-                "description": "Replace exact passages of the open document. Each find must be copied exactly from the document and be long enough to be unique.",
-                "strict": true,
-                "eager_input_streaming": true,
-                "input_schema": [
-                    "type": "object", "additionalProperties": false, "required": ["edits"],
-                    "properties": ["edits": [
-                        "type": "array",
-                        "items": [
-                            "type": "object", "additionalProperties": false, "required": ["find", "replace"],
-                            "properties": ["find": ["type": "string"], "replace": ["type": "string"]],
-                        ],
-                    ]],
-                ],
-            ]],
-            "messages": [["role": "user", "content": text]],
-        ]
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 300
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue(key, forHTTPHeaderField: "x-api-key")
-        request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
-        request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        events(.activity("Thinking"))
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status != 200 {
-            var raw = ""
-            for try await line in bytes.lines { raw += line }
-            let message = ((try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any])
-                .flatMap { $0["error"] as? [String: Any] }?["message"] as? String
-            throw AgentError(message: status == 401 ? "That API key didn't work." : message ?? "The API returned \(status).")
-        }
-
-        var reply = ""
-        var json: [Int: String] = [:]
-        var working = base
-        var complete = false
-        for try await line in bytes.lines {
-            guard line.hasPrefix("data: "), let event = try JSONSerialization.jsonObject(with: Data(line.dropFirst(6).utf8)) as? [String: Any] else { continue }
-            let index = event["index"] as? Int ?? 0
-            switch event["type"] as? String {
-            case "content_block_start":
-                if (event["content_block"] as? [String: Any])?["type"] as? String == "tool_use" {
-                    json[index] = ""
-                    events(.activity("Editing"))
-                }
-            case "content_block_delta":
-                let delta = event["delta"] as? [String: Any] ?? [:]
-                if let t = delta["text"] as? String { reply += t; events(.text(t)) }
-                if let p = delta["partial_json"] as? String { json[index, default: ""] += p }
-            case "content_block_stop":
-                guard let raw = json.removeValue(forKey: index) else { break }
-                guard let input = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
-                      let edits = input["edits"] as? [[String: String]]
-                else { throw AgentError(message: "The edit came back malformed. Try again.") }
-                guard let next = replacing(edits.map { (find: $0["find"] ?? "", replace: $0["replace"] ?? "") }, in: working)
-                else { throw AgentError(message: "The edit didn't match the document. Try again.") }
-                working = next
-                events(.proposed(working))
-            case "message_delta":
-                if (event["delta"] as? [String: Any])?["stop_reason"] as? String == "refusal" {
-                    throw AgentError(message: "Claude declined that one.")
-                }
-            case "message_stop":
-                complete = true
-            case "error":
-                throw AgentError(message: ((event["error"] as? [String: Any])?["message"] as? String) ?? "The API hit an error.")
-            default:
-                break
-            }
-        }
-        guard complete else { throw AgentError(message: "The connection dropped. Try again.") }
-        previous = "They said: \(prompt.components(separatedBy: "\n").dropFirst(2).first ?? "")\nYou replied: \(reply)"
     }
 }

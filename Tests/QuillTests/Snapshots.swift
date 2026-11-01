@@ -56,11 +56,12 @@ struct Snapshots {
     }
 
     @Test(.enabled(if: dir != nil)) func states() async throws {
+        Brand.register()
         for dark in [false, true] {
             let ws = Workspace(vault: try Self.vault())
             let editor = EditorController(ws: ws)
             let split = NSSplitViewController()
-            let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws)))
+            let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws, chrome: editor.chrome)))
             side.minimumThickness = 210
             split.addSplitViewItem(side)
             split.addSplitViewItem(NSSplitViewItem(viewController: editor))
@@ -109,9 +110,33 @@ struct Snapshots {
             await shot("command-selection")
             editor.chrome.selectedWords = 0
             editor.chrome.commanding = false
-            editor.chrome.choosingMode = true
-            await shot("chooser")
-            editor.chrome.choosingMode = false
+            let pitch = editor.text.string as NSString
+            let hedge = pitch.range(of: "We are basically trying to kind of build a tool that maybe helps people write better, in a way.")
+            if hedge.location != NSNotFound {
+                editor.text.perform([Change(range: hedge, text: "We are building a tool that helps people write better.")], by: .agent(turn: 1, flags: []), turn: 1)
+                ws.phase = .said("Cut the hedges from the opening.")
+                await shot("review")
+                ws.phase = .idle
+                editor.text.setSelectedRange(NSRange(location: hedge.location + 4, length: 0))
+                await shot("review-card")
+                ws.revert()
+                let again = (editor.text.string as NSString).range(of: "kind of build")
+                editor.text.perform([Change(range: again, text: "build — not just a tool")], by: .agent(turn: 2, flags: ["Em dash: “—”", "Negative parallelism: “not just”"]), turn: 2)
+                editor.text.setSelectedRange(NSRange(location: again.location + 2, length: 0))
+                await shot("review-flagged")
+                ws.revert()
+                editor.text.setSelectedRange(NSRange(location: 0, length: 0))
+            }
+            ws.transcript[ws.current!] = [
+                Line(words: "make the first sentence confident and short", reply: "Cut the hedges from the opening."),
+                Line(words: "what do you think of the ending?", reply: "It lands, but the last clause repeats the title. End on the promise instead."),
+            ]
+            editor.chrome.commanding = true
+            await shot("command-history")
+            editor.chrome.commanding = false
+            editor.chrome.searching = true
+            await shot("search")
+            editor.chrome.searching = false
             let doc = editor.text.string
             ws.margin = notes(from: """
             [{"quote": "basically trying to kind of build", "note": "Three hedges in one clause. Say what you are building."},
@@ -119,7 +144,7 @@ struct Snapshots {
             """, in: doc) ?? []
             await shot("notes")
             ws.margin = []
-            let settings = NSHostingView(rootView: SettingsView(ws: ws))
+            let settings = NSHostingView(rootView: SettingsView(ws: ws, chrome: editor.chrome))
             settings.frame = NSRect(origin: .zero, size: settings.fittingSize)
             let sw = Self.window(settings.fittingSize, dark: dark)
             sw.contentView = settings

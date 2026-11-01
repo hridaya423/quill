@@ -22,10 +22,22 @@ let pitch = "# Lumen\n\nWe are basically trying to build a tool.\n\nWriters lose
 }
 
 @Test func promptCarriesWordsDocumentAndMode() {
-    let r = Request(words: "make the opening punchier", path: "/v/pitch.md", text: pitch, selection: nil, mode: .notes)
-    let p = prompt(r, canEditFiles: true)
+    let r = Request(words: "make the opening punchier", title: "pitch", path: "/desk/pitch.md", text: pitch, selection: nil, mode: .notes)
+    let p = prompt(r, canEditFiles: true, voice: "## My rules\n- lowercase")
     #expect(p.contains("make the opening punchier"))
     #expect(p.contains(pitch))
-    #expect(p.contains("JSON array"))
-    #expect(!prompt(Request(words: "x", path: "/p", text: "t", selection: "sel", mode: .guided), canEditFiles: false).contains("JSON array"))
+    #expect(p.contains("<notes>"))
+    #expect(p.contains("/desk/pitch.md"))
+    #expect(p.contains("follow the voice notes"))
+    #expect(!prompt(Request(words: "x", title: "t", path: "/p", text: "t", selection: "sel", mode: .guided), canEditFiles: false).contains("<notes>"))
+}
+
+@Test func taggedNotesIgnoreBracketsInTheReply() {
+    let reply = """
+    Two thoughts [roughly]:
+    <notes>[{"quote": "Writers lose hours to editing", "lens": "order", "note": "Lead with this."}]</notes>
+    """
+    let n = notes(from: reply, in: pitch)
+    #expect(n?.count == 1)
+    #expect(n?.first?.lens == "Order")
 }

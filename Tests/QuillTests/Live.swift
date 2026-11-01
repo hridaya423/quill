@@ -48,9 +48,9 @@ struct Live {
         let cwd = FileManager.default.temporaryDirectory.appending(path: "quill-generic-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
         defer { agent.shutdown() }
-        try await agent.prepare(cwd: cwd)
+        try await agent.prepare(cwd: cwd, readable: [])
         var reply = ""
-        try await agent.send("\(request):\n\n\(paragraph)\n\nReply with only the edited paragraph. Do not edit files.", base: "") { e in
+        try await agent.send("\(request):\n\n\(paragraph)\n\nReply with only the edited paragraph. Do not edit files.", file: nil, base: "") { e in
             if case .text(let t) = e { reply += t }
         }
         return reply.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -65,7 +65,7 @@ struct Live {
         let vault = dir.appending(path: "vault")
         try? FileManager.default.removeItem(at: vault)
         try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
-        UserDefaults.standard.set([Self.corpus!], forKey: "voiceSources")
+        Prefs.voiceSources = [Self.corpus!]
         for (i, (_, p)) in picked.enumerated() {
             try "\(p)\n".write(to: vault.appending(path: "p\(i).md"), atomically: true, encoding: .utf8)
         }
@@ -133,6 +133,6 @@ struct Live {
         """
         try report.write(to: dir.appending(path: "report.txt"), atomically: true, encoding: .utf8)
         Swift.print(report)
-        UserDefaults.standard.removeObject(forKey: "voiceSources")
+        Prefs.voiceSources = []
     }
 }

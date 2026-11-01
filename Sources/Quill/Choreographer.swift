@@ -4,7 +4,7 @@ import QuillCore
 
 extension QuillTextView {
     @discardableResult
-    func commit(_ changes: [Change]) -> [Change] {
+    func commit(_ changes: [Change], by source: EditSource) -> [Change] {
         let text = string as NSString
         var inverse: [Change] = []
         var shift = 0
@@ -12,27 +12,38 @@ extension QuillTextView {
         let olds = ordered.map { text.substring(with: $0.range) }
         for (c, old) in zip(ordered, olds) {
             let r = NSRange(location: c.range.location + shift, length: c.range.length)
-            replace(r, with: c.text)
+            replace(r, with: c.text, by: source)
             inverse.append(Change(range: NSRange(location: r.location, length: c.text.utf16.count), text: old))
             shift += c.text.utf16.count - c.range.length
         }
         return inverse
     }
 
-    func registerUndo(_ inverse: [Change]) {
-        guard let um = undoManager, !inverse.isEmpty else { return }
+    @discardableResult
+    func perform(_ changes: [Change], by source: EditSource, turn: Int) -> [Change] {
+        let before = review
+        let inverse = commit(changes, by: source)
+        record(inverse, name: "Changes", turn: turn, before: before, after: review, back: true)
+        return inverse
+    }
+
+    func record(_ inverse: [Change], name: String, turn: Int, before: Review, after: Review, back: Bool) {
+        guard let um = undoManager else { return }
         breakUndoCoalescing()
-        let tag = undoTag
         um.registerUndo(withTarget: self) { view in
             MainActor.assumeIsolated {
-                let previous = view.undoTag
-                view.undoTag = tag
-                view.registerUndo(view.commit(inverse))
-                view.undoTag = previous
-                view.onUndo?(tag)
+                if back, name == "Changes" {
+                    let vanished = view.review.hunks.filter { h in !before.hunks.contains { $0.id == h.id } }
+                    view.onResolve?(vanished, .undone)
+                }
+                let again = view.commit(inverse, by: .restore)
+                view.setReview(before)
+                view.record(again, name: name, turn: turn, before: after, after: before, back: !back)
+                view.onUndo?(name, back)
             }
         }
-        um.setActionName("Quill Edit")
+        um.setActionName(name)
+        um.setActionUserInfoValue(turn, forKey: .turn)
     }
 }
 
@@ -43,12 +54,12 @@ extension QuillTextView {
 @MainActor
 final class Choreographer {
     private unowned let view: QuillTextView
-    private var queue: [Change] = []
-    private var current: Change?
-    private var currentApplied = false
-    private var inverse: [Change] = []
+    private var changes: [Change] = []
+    private var source = EditSource.other
+    private var turn = 0
+    private var fresh: [NSRange]?
+    private var layers: [CALayer] = []
     private var task: Task<Void, Never>?
-    private var caret: CALayer?
     var onFinish: ((Int) -> Void)?
 
     init(view: QuillTextView) {
@@ -57,66 +68,50 @@ final class Choreographer {
 
     var isBusy: Bool { task != nil }
 
-    func play(_ changes: [Change]) {
+    func play(_ changes: [Change], as source: EditSource, turn: Int) {
         guard !changes.isEmpty else { return }
         land()
+        self.changes = changes.sorted { $0.range.location < $1.range.location }
+        self.source = source
+        self.turn = turn
+        fresh = nil
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let inv = view.commit(changes)
-            for c in inv { glow(c.range) }
-            view.registerUndo(inv)
-            onFinish?(changes.count)
+            settle()
             return
         }
-        queue = shifted(changes)
-        inverse = []
-        let count = changes.count
         task = Task { [weak self] in
             guard let self else { return }
-            while let next = self.queue.first, !Task.isCancelled {
-                self.queue.removeFirst()
-                self.current = next
-                self.currentApplied = false
-                await self.animate(next)
-            }
-            if !Task.isCancelled { self.finish(count) }
+            await self.run()
+            if !Task.isCancelled { self.finish() }
         }
     }
 
     func land() {
-        guard let task else { return }
-        task.cancel()
-        self.task = nil
-        if let c = current, !currentApplied {
-            applyNow(c)
-        }
-        for c in queue { applyNow(c) }
-        let count = inverse.count
-        queue = []
-        current = nil
-        view.clearMarks(.foregroundColor)
-        caret?.removeFromSuperlayer()
-        caret = nil
-        finish(count)
+        guard task != nil else { return }
+        settle()
     }
 
-    private func finish(_ count: Int) {
+    private func settle() {
+        task?.cancel()
         task = nil
-        current = nil
-        view.registerUndo(inverse)
-        inverse = []
+        if fresh == nil { replaceAll() }
+        view.clearMarks(.foregroundColor)
+        for layer in layers { layer.removeFromSuperlayer() }
+        finish()
+    }
+
+    private func finish() {
+        task = nil
+        layers = []
+        let count = changes.count
+        changes = []
+        fresh = nil
         onFinish?(count)
     }
 
-    private func applyNow(_ c: Change) {
-        let old = (view.string as NSString).substring(with: c.range)
-        view.replace(c.range, with: c.text)
-        record(c, old: old)
-        glow(NSRange(location: c.range.location, length: c.text.utf16.count))
-    }
-
-    private func record(_ c: Change, old: String) {
-        inverse.append(Change(range: NSRange(location: c.range.location, length: c.text.utf16.count), text: old))
-        currentApplied = true
+    private func replaceAll() {
+        let inverse = view.perform(changes, by: source, turn: turn)
+        fresh = inverse.map(\.range)
     }
 
     private func pause(_ seconds: Double) async -> Bool {
@@ -124,41 +119,35 @@ final class Choreographer {
         return !Task.isCancelled
     }
 
-    private func animate(_ c: Change) async {
-        guard await reveal(c.range) else { return }
-        let old = (view.string as NSString).substring(with: c.range)
-        var dustImage: (CGImage, CGRect)?
-        var strikes: [CALayer] = []
-
-        if c.range.length > 0 {
-            view.mark(c.range, [.foregroundColor: Theme.red])
-            strikes = strike(view.segments(c.range))
-            guard await pause(0.2) else { return }
-            let rects = view.segments(c.range)
-            if let bounds = rects.reduce(nil, { ($0 ?? $1).union($1) as CGRect? }) {
-                let frame = bounds.insetBy(dx: -2, dy: -2).integral
-                if let image = snapshot(frame) { dustImage = (image, frame) }
+    private func run() async {
+        guard let first = changes.first, await reveal(first.range) else { return }
+        let cuts = changes.filter { $0.range.length > 0 }
+        if !cuts.isEmpty {
+            var strikes: [CALayer] = []
+            for c in cuts {
+                view.mark(c.range, [.foregroundColor: Theme.red])
+                strikes += strike(view.segments(c.range))
             }
-        }
-
-        if let (image, frame) = dustImage {
-            view.mark(c.range, [.foregroundColor: NSColor.clear])
-            dust(image, frame)
+            layers += strikes
+            guard await pause(0.24) else { return }
+            for c in cuts {
+                let rects = view.segments(c.range)
+                if let bounds = rects.reduce(nil, { ($0 ?? $1).union($1) as CGRect? }) {
+                    let frame = bounds.insetBy(dx: -2, dy: -2).integral
+                    if let image = snapshot(frame) { dust(image, frame) }
+                }
+                view.mark(c.range, [.foregroundColor: NSColor.clear])
+            }
             for s in strikes { fadeAway(s, duration: 0.2) }
             guard await pause(0.3) else { return }
         }
-
-        view.replace(c.range, with: c.text)
-        record(c, old: old)
-        let fresh = NSRange(location: c.range.location, length: c.text.utf16.count)
-        if fresh.length > 0 {
-            view.mark(fresh, [.foregroundColor: NSColor.clear])
-            guard await type(fresh) else { return }
-        } else {
-            guard await pause(0.12) else { return }
+        replaceAll()
+        guard let fresh, fresh.contains(where: { $0.length > 0 }) else {
+            _ = await pause(0.12)
+            return
         }
-        glow(fresh)
-        _ = await pause(0.14)
+        for r in fresh where r.length > 0 { view.mark(r, [.foregroundColor: NSColor.clear]) }
+        _ = await type(fresh.filter { $0.length > 0 })
     }
 
     private func reveal(_ r: NSRange) async -> Bool {
@@ -284,57 +273,45 @@ final class Choreographer {
         }
     }
 
-    private func type(_ r: NSRange) async -> Bool {
+    private func type(_ ranges: [NSRange]) async -> Bool {
         let text = view.string as NSString
-        let total = min(0.75, max(0.14, Double(r.length) * 0.018))
+        let longest = ranges.map(\.length).max() ?? 0
+        let total = min(0.8, max(0.16, Double(longest) * 0.016))
         let start = CACurrentMediaTime()
-        let caret = CALayer()
-        caret.backgroundColor = Theme.accent.cgColor
-        caret.cornerRadius = 1
-        view.fx.addSublayer(caret)
-        self.caret = caret
-        var shown = 0
-        while shown < r.length {
+        let carets = ranges.prefix(8).map { _ in
+            let caret = CALayer()
+            caret.backgroundColor = Theme.accent.cgColor
+            caret.cornerRadius = 1
+            view.fx.addSublayer(caret)
+            return caret
+        }
+        layers += carets
+        var shown = Array(repeating: 0, count: ranges.count)
+        while zip(shown, ranges).contains(where: { $0 < $1.length }) {
             guard await pause(1.0 / 120) else { return false }
             let t = min(1, (CACurrentMediaTime() - start) / total)
-            var target = Int((Double(r.length) * t).rounded())
-            if target > 0, target < r.length {
-                let composed = text.rangeOfComposedCharacterSequence(at: r.location + target - 1)
-                target = NSMaxRange(composed) - r.location
+            var moved = false
+            for (i, r) in ranges.enumerated() {
+                var target = Int((Double(r.length) * t).rounded())
+                if target > 0, target < r.length {
+                    target = NSMaxRange(text.rangeOfComposedCharacterSequence(at: r.location + target - 1)) - r.location
+                }
+                if target > shown[i] { shown[i] = target; moved = true }
             }
-            guard target > shown else { continue }
-            shown = target
+            guard moved else { continue }
             view.clearMarks(.foregroundColor)
-            if shown < r.length { view.mark(NSRange(location: r.location + shown, length: r.length - shown), [.foregroundColor: NSColor.clear]) }
-            if let seg = view.segments(NSRange(location: r.location + shown, length: 0)).first {
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                caret.frame = CGRect(x: seg.minX, y: seg.minY + 5, width: 2, height: max(seg.height - 10, 14))
-                CATransaction.commit()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for (i, r) in ranges.enumerated() {
+                if shown[i] < r.length { view.mark(NSRange(location: r.location + shown[i], length: r.length - shown[i]), [.foregroundColor: NSColor.clear]) }
+                if i < carets.count, let seg = view.segments(NSRange(location: r.location + shown[i], length: 0)).first {
+                    carets[i].frame = CGRect(x: seg.minX, y: seg.minY + 5, width: 2, height: max(seg.height - 10, 14))
+                }
             }
+            CATransaction.commit()
         }
-        fadeAway(caret, duration: 0.18)
-        self.caret = nil
+        for caret in carets { fadeAway(caret, duration: 0.18) }
         return true
-    }
-
-    private func glow(_ r: NSRange) {
-        guard r.length > 0 else { return }
-        for rect in view.segments(r) {
-            let line = CALayer()
-            line.backgroundColor = Theme.green.withAlphaComponent(0.7).cgColor
-            line.cornerRadius = 1
-            line.frame = CGRect(x: rect.minX, y: rect.maxY - 6, width: rect.width, height: 2)
-            line.opacity = 0
-            view.fx.addSublayer(line)
-            let pulse = CAKeyframeAnimation(keyPath: "opacity")
-            pulse.values = [0, 1, 1, 0]
-            pulse.keyTimes = [0, 0.06, 0.62, 1]
-            pulse.duration = 2.6
-            pulse.timingFunctions = [easeOut, easeOut, easeOut]
-            line.add(pulse, forKey: "glow")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.65) { line.removeFromSuperlayer() }
-        }
     }
 
     private func fadeAway(_ layer: CALayer, duration: Double) {

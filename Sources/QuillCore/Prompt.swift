@@ -7,13 +7,15 @@ public enum Mode: String, CaseIterable, Sendable {
 
 public struct Request: Sendable {
     public var words: String
+    public var title: String
     public var path: String
     public var text: String
     public var selection: String?
     public var mode: Mode
 
-    public init(words: String, path: String, text: String, selection: String?, mode: Mode) {
+    public init(words: String, title: String, path: String, text: String, selection: String?, mode: Mode) {
         self.words = words
+        self.title = title
         self.path = path
         self.text = text
         self.selection = selection
@@ -26,12 +28,13 @@ public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, brief
     if let briefing { lines += [briefing, "", "---", ""] }
     if let voice, !voice.isEmpty {
         lines += [
-            "The writer's voice notes. Match this voice. These are preferences: the editorial rules win when they conflict.",
+            "The writer's voice notes. They describe how this writer writes and what they want. When they disagree with the editorial guidance, follow the voice notes.",
             "<voice>", voice, "</voice>", "",
         ]
     }
+    let target = canEditFiles ? "Your working copy of the note is \(r.path). " : ""
     lines += [
-        "You are the co-writer inside Quill, a calm Markdown editor. Follow the editorial rules from the start of this session in every edit. The writer is looking at \(r.path) and just said:",
+        "You are the co-writer inside Quill, a calm Markdown editor. The writer is looking at their note \"\(r.title)\". \(target)They just said:",
         "",
         "\"\(r.words)\"",
         "",
@@ -39,22 +42,26 @@ public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, brief
     if let s = r.selection, !s.isEmpty {
         lines += ["They have this passage selected, so \"this\" means it:", "<selection>", s, "</selection>", ""]
     }
-    lines += ["The document right now:", "<document>", r.text, "</document>", ""]
+    lines += ["The note right now:", "<document>", r.text, "</document>", ""]
     let how = canEditFiles
-        ? "edit \(r.path) directly with your file editing tool"
+        ? "edit \(r.path) directly with your file editing tool. Edit only that file and never run commands"
         : "call the edit tool"
     switch r.mode {
     case .guided:
         lines += [
-            "If they want the text changed, \(how). Make the smallest edits that do what they asked. Keep their voice. Leave every other word exactly as it is. Never touch other files and never run commands.",
+            "If they want the text changed, \(how). Make the smallest edits that do what they asked. Keep their voice. Leave every other word exactly as it is. The writer reviews each change and keeps or reverts it.",
             "If they asked a question or want your opinion, don't edit. Answer instead.",
             "Finish with a plain-text reply for them. After an edit: one short sentence, at most 12 words, naming what you changed; don't quote the new text or mention what you left alone. For an opinion: up to three sentences, specific and honest, the way a good editor talks. No Markdown, no lists, no preamble, no em dashes.",
         ]
     case .notes:
         lines += [
-            "Don't edit the document unless they explicitly ask you to change the text; if they do, \(how) with the smallest edits that do it.",
-            "Otherwise reply with only a JSON array of margin notes and nothing else, like:",
-            #"[{"quote": "exact words from the document", "lens": "Cut", "note": "what you think and why, in one or two sentences"}]"#,
+            "Don't edit the note unless they explicitly ask you to change the text; if they do, \(how) with the smallest edits that do it.",
+            canEditFiles
+                ? "Otherwise reply with only a JSON array of margin notes inside <notes></notes> tags and nothing else, like:"
+                : "Otherwise call leave_notes once with your margin notes and write nothing else. Each note looks like:",
+            canEditFiles
+                ? #"<notes>[{"quote": "exact words from the document", "lens": "Cut", "note": "what you think and why, in one or two sentences"}]</notes>"#
+                : #"{"quote": "exact words from the document", "lens": "Cut", "note": "what you think and why, in one or two sentences"}"#,
             "Each quote must be copied exactly from the document, 3 to 12 words long. The lens is one of: \(lenses.joined(separator: ", ")). Give at most 6 notes, most important first. Write notes like a great editor in the margin: specific, brief, no praise padding, no em dashes.",
         ]
     }
@@ -70,8 +77,12 @@ public struct MarginNote: Equatable, Sendable, Identifiable {
 }
 
 public func notes(from reply: String, in text: String) -> [MarginNote]? {
-    guard let open = reply.firstIndex(of: "["), let close = reply.lastIndex(of: "]"), open < close,
-          let data = String(reply[open...close]).data(using: .utf8),
+    var body = Substring(reply)
+    if let start = reply.range(of: "<notes>"), let end = reply.range(of: "</notes>", range: start.upperBound..<reply.endIndex) {
+        body = reply[start.upperBound..<end.lowerBound]
+    }
+    guard let open = body.firstIndex(of: "["), let close = body.lastIndex(of: "]"), open < close,
+          let data = String(body[open...close]).data(using: .utf8),
           let raw = try? JSONDecoder().decode([[String: String]].self, from: data)
     else { return nil }
     let doc = text as NSString

@@ -8,11 +8,17 @@ vault="$out/vault"
 rm -rf "$out"; mkdir -p "$vault" "$out/frames"
 cp scripts/fixtures/pitch.md "$vault/pitch.md"
 pkill -x Quill 2>/dev/null || true
-defaults write app.quill.Quill mode "${QUILL_MODE:-guided}"
-defaults write app.quill.Quill choseMode -bool true
-defaults write app.quill.Quill agent "${QUILL_AGENT:-claude}"
+suite=app.quill.e2e
+defaults delete "$suite" >/dev/null 2>&1 || true
+defaults write "$suite" mode "${QUILL_MODE:-guided}"
+defaults write "$suite" agent "${QUILL_AGENT:-claude}"
+defaults write "$suite" onboarded -bool true
+defaults write "$suite" spoke -bool true
+[ -n "${QUILL_MODEL:-}" ] && defaults write "$suite" "model.${QUILL_AGENT:-claude}" "$QUILL_MODEL"
+mkdir -p "$out/support"
 sleep 0.5
-open -n build/Quill.app --env QUILL_VAULT="$PWD/$vault" ${ANTHROPIC_API_KEY:+--env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"}
+open -n build/Quill.app --env QUILL_VAULT="$PWD/$vault" --env QUILL_DEFAULTS="$suite" --env QUILL_SUPPORT="$PWD/$out/support" \
+  ${ANTHROPIC_API_KEY:+--env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"}
 sleep 4
 
 front() {
@@ -42,14 +48,23 @@ start=$(date +%s); i=0
 while [ $(( $(date +%s) - start )) -lt "$seconds" ]; do
   screencapture -x -o -l "$id" "$out/frames/$(printf %04d $i).png"; i=$((i+1))
 done
-cp "$vault/pitch.md" "$out/after.md"
+cp "$vault/pitch.md" "$out/pending.md"
+screencapture -x -o -l "$id" "$out/pending.png"
 front
 osascript -e 'tell application "System Events" to key code 53'
+osascript -e 'tell application "System Events" to key code 36 using {command down, shift down}'
+sleep 1
+screencapture -x -o -l "$id" "$out/kept.png"
+cp "$vault/pitch.md" "$out/after.md"
+osascript -e 'tell application "System Events" to keystroke "z" using command down'
+sleep 0.6
 osascript -e 'tell application "System Events" to keystroke "z" using command down'
 sleep 1.5
 screencapture -x -o -l "$id" "$out/undone.png"
 cp "$vault/pitch.md" "$out/undone.md"
 echo "frames: $i"
-echo "--- after"; cat "$out/after.md"
-if cmp -s scripts/fixtures/pitch.md "$out/undone.md"; then echo "--- undo restored the original exactly"; else echo "--- undo did NOT restore the original"; diff scripts/fixtures/pitch.md "$out/undone.md" || true; fi
+if cmp -s scripts/fixtures/pitch.md "$out/pending.md"; then echo "--- vault untouched while changes were pending"; else echo "--- vault CHANGED before review"; diff scripts/fixtures/pitch.md "$out/pending.md" || true; fi
+echo "--- after keep all"; cat "$out/after.md"
+if cmp -s scripts/fixtures/pitch.md "$out/undone.md"; then echo "--- two undos restored the original exactly"; else echo "--- undo did NOT restore the original"; diff scripts/fixtures/pitch.md "$out/undone.md" || true; fi
+cat "$out/support/turns.jsonl" 2>/dev/null | tail -1 | cut -c1-400
 tail -1 "$HOME/Library/Logs/Quill/turns.tsv"

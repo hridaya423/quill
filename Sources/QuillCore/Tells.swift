@@ -13,7 +13,7 @@ private let rules: [(String, NSRegularExpression)] = [
     ("AI vocabulary", pattern(#"\b(delv(e|es|ed|ing)|tapestr(y|ies)|testament to|multifaceted|realm|interplay|underscor(e|es|ed|ing)|leverag(e|es|ed|ing)|it'?s worth noting|game[- ]changer|unlock(s|ed|ing)? the)\b"#)),
     ("Landscape opener", pattern(#"\bin today'?s [a-z -]{0,30}(landscape|world|age|era)\b"#)),
     ("Em dash", pattern(#"—|–| -- "#)),
-    ("Negative parallelism", pattern(#"(\bnot|n['’]t) (just|only|merely|simply) [^.!?\n]{1,60}?,? but( also)?\b|\b(it'?s|it is|this is|that'?s) not (about )?[^.!?\n]{1,40}?[,;—] (it'?s|it is)\b"#)),
+    ("Negative parallelism", pattern(#"(\bnot|n['’]t) (just|merely|simply) [^.!?\n]{1,60}?,? but( also)?\b|\b(it'?s|it is|this is|that'?s) not (about )?[^.!?\n]{1,40}?[,;—] (it'?s|it is)\b"#)),
     ("Significance inflation", pattern(#"\b(serves as an?|stands as an?|pivotal (moment|role)|indelible mark|evolving landscape|plays? a (crucial|vital|key) role)\b"#)),
     ("Filler", pattern(#"\b(in order to|due to the fact that|at this point in time|has the ability to|it is important to note|it should be noted)\b"#)),
     ("Chatbot artifact", pattern(#"\b(i hope this helps|great question|let'?s dive in|here'?s the thing|let'?s be honest|here'?s what you need to know)\b|\b(certainly|of course|absolutely)!"#)),
@@ -43,16 +43,24 @@ public func tells(in text: String) -> [Tell] {
     return found
 }
 
-public func introducedTells(before: String, after: String, allowEmDash: Bool = false) -> [Tell] {
+public func introducedTells(before: String, after: String, allowing habits: Set<String> = []) -> [Tell] {
     var budget: [String: Int] = [:]
     for t in tells(in: before) { budget[t.kind + "|" + t.phrase.lowercased(), default: 0] += 1 }
     var introduced: [Tell] = []
     for t in tells(in: after) {
-        if allowEmDash, t.kind == "Em dash" { continue }
+        if habits.contains(t.kind) { continue }
         let key = t.kind + "|" + t.phrase.lowercased()
         if let n = budget[key], n > 0 { budget[key] = n - 1 } else { introduced.append(t) }
     }
     return introduced
+}
+
+public func habitualTells(_ texts: [String]) -> Set<String> {
+    var counts: [String: Int] = [:]
+    for text in texts where isWriting(text) {
+        for tell in tells(in: prose(from: text)) { counts[tell.kind, default: 0] += 1 }
+    }
+    return Set(counts.filter { $0.value >= 3 }.keys)
 }
 
 public func changedParagraphs(base: String, proposed: String) -> (before: String, after: String) {

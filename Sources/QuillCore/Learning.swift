@@ -1,7 +1,7 @@
 import Foundation
 
 public enum Outcome: String, Codable, Sendable {
-    case kept, reverted, rewritten, undone
+    case kept, reverted, rewritten, undone, unreviewed
 }
 
 public struct Exchange: Codable, Equatable, Sendable {

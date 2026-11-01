@@ -7,21 +7,23 @@ import QuillCore
 final class Chrome {
     var commanding = false
     var draft = ""
-    var hinting = !UserDefaults.standard.bool(forKey: "spoke")
-    var choosingMode = false
+    var hinting = !Prefs.spoke
     var selectedWords = 0
     var coach: String?
-    var coachStarted: Date?
-    var history: [String] = UserDefaults.standard.stringArray(forKey: "history") ?? []
+    var history: [String] = Prefs.history
     var recall: Int?
     var stash = ""
+    var searching = false
+    var talkKey = Prefs.talkKey {
+        didSet { Prefs.talkKey = talkKey }
+    }
 
     func remember(_ words: String) {
         history.removeAll { $0 == words }
         history.append(words)
         history = Array(history.suffix(30))
         recall = nil
-        UserDefaults.standard.set(history, forKey: "history")
+        Prefs.history = history
     }
 }
 
@@ -53,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var window: NSWindow!
+    private var sidebar: NSSplitViewItem!
     private var settings: NSWindow?
     private var overlay: NSView?
     private var ws: Workspace!
@@ -61,8 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Brand.register()
         let env = ProcessInfo.processInfo.environment
-        let saved = UserDefaults.standard.string(forKey: "vault")
-        let vault = URL(fileURLWithPath: env["QUILL_VAULT"] ?? saved ?? NSHomeDirectory() + "/Quill")
+        let vault = URL(fileURLWithPath: env["QUILL_VAULT"] ?? Prefs.vault ?? NSHomeDirectory() + "/Quill")
         let fresh = !FileManager.default.fileExists(atPath: vault.path)
         ws = Workspace(vault: vault)
         ws.showSettings = { [weak self] in self?.openSettings() }
@@ -70,7 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         editor = EditorController(ws: ws)
         let split = NSSplitViewController()
-        let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws, settings: { [weak self] in self?.openSettings() })))
+        let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws, chrome: editor.chrome, settings: { [weak self] in self?.openSettings() })))
+        sidebar = side
         side.minimumThickness = 210
         side.maximumThickness = 320
         side.canCollapse = true
@@ -96,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = menu()
         ws.start()
         NSApp.activate()
-        if !UserDefaults.standard.bool(forKey: "onboarded") || ProcessInfo.processInfo.arguments.contains("--onboarding") { onboard() }
+        if !Prefs.onboarded || ProcessInfo.processInfo.arguments.contains("--onboarding") { onboard() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -114,16 +117,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         ## Try it
 
-        Here is a pitch with a weak opening. Hold the **right ⌥** key, say *"make the first sentence confident and short"*, then let go.
+        Here is a pitch with a weak opening. Hold the **\(Prefs.talkKey.label)** key, say *"make the first sentence confident and short"*, then let go.
 
         > We are basically trying to kind of build a tool that maybe helps people write better, in a way.
 
-        Writers lose hours to editing. Quill gives them an editor that listens, then shows its work: every change lands in front of you, and one ⌘Z takes it all back.
+        Writers lose hours to editing. Quill gives them an editor that listens, then shows its work: every change lands in front of you, tinted until you keep it or revert it.
 
         ## Good to know
 
-        - Press ⌘K to type a request instead of speaking.
+        - Press ⌘K to type a request instead of speaking, or ⇧⌘K to talk without holding a key.
         - Select a passage first and "this" means that passage.
+        - Put the caret in a change to see what it replaced. ⌘↩ keeps it, ⌘⌫ reverts it, ⌘] jumps to the next one.
+        - One ⌘Z takes back a whole request.
         - Ask *"what do you think?"* for an opinion without edits.
         """
         try? welcome.write(to: vault.appending(path: "Welcome.md"), atomically: true, encoding: .utf8)
@@ -169,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         _ = add("File", [
             item("New Note", #selector(newNote), "n", target: self),
+            item("Quick Open…", #selector(quickOpen), "p", target: self),
             item("Open Folder…", #selector(openFolder), "o", target: self),
             .separator(),
             item("Save", #selector(save), "s", target: self),
@@ -232,17 +238,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agents.addItem(item("Settings…", #selector(openSettings), target: self))
         let agentsItem = item("Co-writer", nil)
         agentsItem.submenu = agents
-        let talk = item("Hold Right ⌥ to Talk", nil)
-        talk.isEnabled = false
+        let models = NSMenu(title: "Model")
+        models.delegate = self
+        let modelsItem = item("Model", nil)
+        modelsItem.submenu = models
+        let hold = item("Hold to Talk", #selector(holdHint), target: self)
         _ = add("Agent", [
             item("Ask…", #selector(ask), "k", target: self),
-            talk,
+            item("Talk", #selector(toggleTalk), "k", [.command, .shift], target: self),
+            hold,
             item("Stop", #selector(stop), ".", target: self),
+            .separator(),
+            item("Keep Change", #selector(keepChange), "\r", target: self),
+            item("Revert Change", #selector(revertChange), "\u{8}", target: self),
+            item("Keep All Changes", #selector(keepAll), "\r", [.command, .shift], target: self),
+            item("Revert All Changes", #selector(revertAll), "\u{8}", [.command, .shift], target: self),
+            item("Next Change", #selector(nextChange), "]", target: self),
+            item("Previous Change", #selector(previousChange), "[", target: self),
             .separator(),
             item("Guided Edits", #selector(guided), "1", [.command, .control], target: self),
             item("Margin Notes", #selector(notesMode), "2", [.command, .control], target: self),
             .separator(),
             agentsItem,
+            modelsItem,
         ])
         _ = add("View", [
             item("Hide Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]),
@@ -275,7 +293,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func newNote() { ws.create() }
     @objc private func ask() { editor.command() }
+    @objc private func toggleTalk() { editor.toggleTalk() }
+    @objc private func holdHint() {}
     @objc private func stop() { ws.cancelTurn() }
+    @objc private func keepChange() { ws.focused.map { ws.keep([$0]) } }
+    @objc private func revertChange() { ws.focused.map { ws.revert([$0]) } }
+    @objc private func keepAll() { ws.keep() }
+    @objc private func revertAll() { ws.revert() }
+    @objc private func nextChange() { ws.step(true) }
+    @objc private func previousChange() { ws.step(false) }
+    @objc private func chooseModel(_ sender: NSMenuItem) { (sender.representedObject as? String).map(ws.choose(model:)) }
+    @objc private func quickOpen() {
+        if sidebar.isCollapsed { sidebar.animator().isCollapsed = false }
+        editor.chrome.searching = true
+    }
     @objc private func guided() { ws.mode = .guided }
     @objc private func notesMode() { ws.mode = .notes }
     @objc private func save() { ws.flushSave() }
@@ -296,7 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.window.initialFirstResponder = field
         alert.beginSheetModal(for: window) { [weak self] r in
             guard r == .alertFirstButtonReturn, let self, let problem = self.ws.rename(note, to: field.stringValue) else { return }
-            self.ws.phase = .failed(problem)
+            self.ws.fail(problem)
         }
     }
 
@@ -307,7 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func onboard() {
         guard let content = window.contentView, overlay == nil else { return }
-        UserDefaults.standard.set(Date.now.timeIntervalSince1970, forKey: "onboardStarted")
+        Prefs.onboardStarted = Date.now.timeIntervalSince1970
         Ledger.event("onboarding-started")
         let run = Firstrunner(current: ws.vault)
         let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { [weak self] picked in self?.landed(picked) })
@@ -324,17 +355,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func landed(_ picked: (sentence: String, source: String)?) {
         let (sentence, source) = picked ?? ("We are basically trying to kind of build a tool that maybe helps people write better, in a way.", "a sample pitch")
-        let url = ws.vault.appending(path: "Your first edit.md")
-        try? "# Your first edit\n\n\(sentence)\n".write(to: url, atomically: true, encoding: .utf8)
-        ws.refresh()
+        let practice = Ledger.dir.appending(path: "Practice")
+        try? FileManager.default.createDirectory(at: practice, withIntermediateDirectories: true)
+        let url = practice.appending(path: "Your first edit.md")
+        try? "# Your first edit\n\nThis page lives outside your notes, so nothing here touches them.\n\n\(sentence)\n".write(to: url, atomically: true, encoding: .utf8)
         ws.open(url)
         let r = (editor.text.string as NSString).range(of: sentence)
         if r.location != NSNotFound { editor.text.setSelectedRange(r) }
         window.makeFirstResponder(editor.text)
         editor.chrome.hinting = false
         editor.chrome.coach = source
-        editor.chrome.coachStarted = .now
-        UserDefaults.standard.set(true, forKey: "onboarded")
+        Prefs.onboarded = true
         Ledger.event("onboarding-finished")
         guard let overlay else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -373,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         if settings == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(ws: ws)))
+            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(ws: ws, chrome: editor.chrome)))
             w.title = "Settings"
             w.styleMask = [.titled, .closable]
             w.isReleasedWhenClosed = false
@@ -392,8 +423,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.state = ws.agentID == spec.id ? .on : .off
         case #selector(stop):
             if case .idle = ws.phase { return ws.listener.isListening }
-        case #selector(ask), #selector(rename), #selector(trash), #selector(save):
+        case #selector(ask), #selector(toggleTalk), #selector(rename), #selector(trash), #selector(save):
             return ws.current != nil
+        case #selector(holdHint):
+            item.title = "Hold \(editor.chrome.talkKey.title) to Talk"
+            return false
+        case #selector(keepChange), #selector(revertChange):
+            return ws.focused != nil
+        case #selector(keepAll), #selector(revertAll), #selector(nextChange), #selector(previousChange):
+            return !ws.review.isEmpty
+        case #selector(chooseModel(_:)):
+            item.state = ws.model?.id == item.representedObject as? String ? .on : .off
         default: break
         }
         return true
@@ -401,6 +441,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: NSMenuItemValidation {}
+
+extension AppDelegate: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard !ws.models.isEmpty else {
+            let empty = NSMenuItem(title: "Starting \(ws.spec.name)…", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+        for model in ws.models {
+            let i = NSMenuItem(title: model.name, action: #selector(chooseModel(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = model.id
+            menu.addItem(i)
+        }
+    }
+}
 
 extension EditorController: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -421,9 +479,14 @@ final class EditorController: NSViewController {
     fileprivate var scroll: NSScrollView!
     private var cards: [Int: NSHostingView<NoteCard>] = [:]
     private var activeNote: Int?
+    private var changeCard: NSHostingView<ChangeCard>?
+    private var hovered: Int?
+    private var overCard = false
     private var monitor: Any?
     private var holding = false
+    private var toggled = false
     private var chord = false
+    private var lastKey: CFAbsoluteTime = 0
 
     init(ws: Workspace) {
         self.ws = ws
@@ -463,24 +526,43 @@ final class EditorController: NSViewController {
 
         let choreographer = Choreographer(view: text)
         choreographer.onFinish = { [weak self] n in self?.ws.finishedPlaying(n) }
-        ws.editor = text
-        ws.choreographer = choreographer
-        text.onUndo = { [weak self] tag in self?.ws.undid(tag) }
+        ws.attach(text, choreographer)
+        let review = text.onReview
+        text.onReview = { [weak self] in
+            review?()
+            self?.layoutCard()
+        }
         text.onEdit = { [weak self] in
             self?.ws.edited()
             self?.layoutNotes()
         }
-        text.beforeKey = { [weak choreographer] in choreographer?.land() }
+        text.onCaret = { [weak self] in self?.layoutCard() }
+        text.onHover = { [weak self] index in
+            guard let self else { return }
+            let id = index.flatMap { self.ws.review.hunk(at: $0)?.id }
+            if id != self.hovered { self.hovered = id; self.layoutCard() }
+        }
+        text.beforeKey = { [weak self, weak choreographer] event in
+            guard let self else { return false }
+            let now = CFAbsoluteTimeGetCurrent()
+            defer { self.lastKey = now }
+            guard let choreographer, choreographer.isBusy else { return false }
+            choreographer.land()
+            guard let event, event.keyCode == 49, event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
+            return now - self.lastKey > 2
+        }
         NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: text, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.layoutNotes() }
+            MainActor.assumeIsolated {
+                self?.layoutNotes()
+                self?.layoutCard()
+            }
         }
         scroll.allowsMagnification = true
         scroll.minMagnification = 0.7
         scroll.maxMagnification = 2
-        let zoom = UserDefaults.standard.double(forKey: "zoom")
-        if zoom > 0 { scroll.magnification = zoom }
+        if Prefs.zoom > 0 { scroll.magnification = Prefs.zoom }
         NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scroll, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.remember() }
+            MainActor.assumeIsolated { if let self { Prefs.zoom = self.scroll.magnification } }
         }
         observe()
         listen()
@@ -502,7 +584,7 @@ final class EditorController: NSViewController {
                 scroll.animator().magnification = clamped
             }
         }
-        UserDefaults.standard.set(clamped, forKey: "zoom")
+        Prefs.zoom = clamped
     }
 
     override func viewDidAppear() {
@@ -510,22 +592,20 @@ final class EditorController: NSViewController {
         title()
     }
 
-    private func remember() {
-        UserDefaults.standard.set(scroll.magnification, forKey: "zoom")
-    }
-
     private func observe() {
         withObservationTracking {
             _ = ws.margin
             _ = ws.phase
             _ = ws.current
+            _ = ws.busy
             _ = chrome.commanding
+            _ = chrome.searching
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
                 self.title()
                 self.announce()
-                if !self.chrome.commanding, self.view.window?.firstResponder !== self.text {
+                if !self.chrome.commanding, !self.chrome.searching, self.view.window?.firstResponder !== self.text {
                     self.view.window?.makeFirstResponder(self.text)
                 }
                 self.layoutNotes()
@@ -549,7 +629,7 @@ final class EditorController: NSViewController {
         guard id != spoken else { return }
         spoken = id
         let line: String? = switch ws.phase {
-        case .done(let n): n == 0 ? "Nothing to change" : n == 1 ? "1 change. Command Z to undo." : "\(n) changes. Command Z to undo."
+        case .done(let n): n == 0 ? "Nothing to change" : n == 1 ? "1 change to review. Command Return keeps it." : "\(n) changes to review. Command Shift Return keeps them all."
         case .said(let s): s
         case .failed(let s): s
         case .thinking: "Working"
@@ -565,18 +645,14 @@ final class EditorController: NSViewController {
         case .said, .done:
             if chrome.coach != nil {
                 chrome.coach = nil
-                let started = UserDefaults.standard.double(forKey: "onboardStarted")
-                if started > 0 {
-                    Ledger.event("first-edit", detail: String(format: "%.1f", Date.now.timeIntervalSince1970 - started))
+                if Prefs.onboardStarted > 0 {
+                    Ledger.event("first-edit", detail: String(format: "%.1f", Date.now.timeIntervalSince1970 - Prefs.onboardStarted))
                 }
             }
             if chrome.hinting {
                 chrome.hinting = false
-                UserDefaults.standard.set(true, forKey: "spoke")
+                Prefs.spoke = true
             }
-            if !UserDefaults.standard.bool(forKey: "choseMode") { chrome.choosingMode = true }
-        case .listening, .thinking:
-            chrome.choosingMode = false
         default:
             break
         }
@@ -592,10 +668,20 @@ final class EditorController: NSViewController {
         chrome.commanding.toggle()
     }
 
+    func toggleTalk() {
+        if toggled {
+            toggled = false
+            release()
+        } else if !holding {
+            toggled = true
+            press()
+        }
+    }
+
     private func listen() {
         NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.holding else { return }
+                guard let self, self.holding, !self.toggled else { return }
                 self.holding = false
                 self.ws.listener.cancel()
                 self.ws.phase = .idle
@@ -604,28 +690,37 @@ final class EditorController: NSViewController {
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             guard let self, event.window == self.view.window else { return event }
             if event.type == .keyDown {
-                if self.holding { self.chord = true; self.ws.cancelTurn(); self.holding = false }
+                if self.toggled, event.keyCode == 36 || event.keyCode == 76 {
+                    self.toggleTalk()
+                    return nil
+                }
+                if self.holding, !self.toggled { self.chord = true; self.ws.cancelTurn(); self.holding = false }
                 if event.keyCode == 53 {
+                    if self.toggled { self.toggled = false; self.holding = false; self.ws.cancelTurn(); return nil }
                     if self.chrome.commanding { self.chrome.commanding = false; return nil }
-                    if self.chrome.choosingMode { self.chrome.choosingMode = false; return nil }
                     switch self.ws.phase {
                     case .idle: break
-                    case .thinking: self.ws.cancelTurn(); return nil
+                    case .thinking, .applying: self.ws.cancelTurn(); return nil
                     default: self.ws.phase = .idle; return nil
                     }
                 }
                 return event
             }
-            guard event.keyCode == 61 else { return event }
-            let rightOption: UInt = 0x40
-            let down = event.modifierFlags.rawValue & rightOption != 0 && event.modifierFlags.intersection([.command, .control, .shift]).isEmpty
+            let key = self.chrome.talkKey
+            guard event.keyCode == key.keyCode, !self.toggled else { return event }
+            let raw = event.modifierFlags.rawValue
+            let down: Bool = switch key {
+            case .rightOption: raw & 0x40 != 0 && event.modifierFlags.intersection([.command, .control, .shift]).isEmpty
+            case .rightCommand: raw & 0x10 != 0 && event.modifierFlags.intersection([.option, .control, .shift]).isEmpty
+            case .fn: event.modifierFlags.contains(.function) && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+            }
             if down, !self.holding { self.press() } else if !down, self.holding { self.release() }
             return event
         }
     }
 
     private func press() {
-        guard !isThinking(ws.phase) else { return }
+        guard !ws.busy else { toggled = false; return }
         holding = true
         chord = false
         chrome.commanding = false
@@ -636,13 +731,15 @@ final class EditorController: NSViewController {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                 }))
                 holding = false
+                toggled = false
                 return
             }
             guard holding else { return }
             ws.phase = .listening("")
             do { try await ws.listener.start() } catch {
-                ws.phase = .failed("Couldn't start listening: \(error.localizedDescription)")
+                ws.fail("Couldn't start listening: \(error.localizedDescription)")
                 holding = false
+                toggled = false
             }
         }
     }
@@ -661,10 +758,43 @@ final class EditorController: NSViewController {
         }
     }
 
-    private func isThinking(_ p: Phase) -> Bool {
-        if case .thinking = p { return true }
-        if case .applying = p { return true }
-        return false
+    private func layoutCard() {
+        let id = overCard ? changeCard?.rootView.hunk.id : hovered ?? ws.focused?.id
+        guard let id, let hunk = ws.review.hunk(id), let rect = text.segments(hunk.range).last ?? text.segments(NSRange(location: hunk.range.location, length: 0)).first else {
+            changeCard?.removeFromSuperview()
+            changeCard = nil
+            overCard = false
+            return
+        }
+        let card = ChangeCard(
+            hunk: hunk,
+            keep: { [weak self] in
+                self?.overCard = false
+                self?.ws.keep([hunk])
+            },
+            revert: { [weak self] in
+                self?.overCard = false
+                self?.ws.revert([hunk])
+            },
+            hover: { [weak self] on in
+                self?.overCard = on
+                if !on { self?.layoutCard() }
+            }
+        )
+        let host = changeCard ?? {
+            let h = NSHostingView(rootView: card)
+            h.sizingOptions = [.intrinsicContentSize]
+            text.addSubview(h)
+            changeCard = h
+            return h
+        }()
+        host.rootView = card
+        let size = host.fittingSize
+        let first = text.segments(hunk.range).first ?? rect
+        let x = min(max(text.textContainerInset.width + Theme.hang - 12, first.minX - 26), text.bounds.width - size.width - 4)
+        let below = CGRect(x: x, y: rect.maxY - 6, width: size.width, height: size.height)
+        let visible = scroll.contentView.documentVisibleRect
+        host.frame = below.maxY < visible.maxY - 110 ? below : CGRect(x: x, y: first.minY - size.height + 6, width: size.width, height: size.height)
     }
 
     private func layoutNotes() {
@@ -686,10 +816,10 @@ final class EditorController: NSViewController {
                 .underlineStyle: NSUnderlineStyle([.single, .patternDot]).rawValue,
                 .underlineColor: Theme.accent.withAlphaComponent(0.75),
             ]
-            if activeNote == note.id { look[.backgroundColor] = Theme.accent.withAlphaComponent(0.14) }
+            if activeNote == note.id { look[.backgroundColor] = Theme.accent.withAlphaComponent(0.12) }
             text.mark(note.range, look)
             let card = cards[note.id] ?? {
-                let h = NSHostingView(rootView: NoteCard(note: note, active: false, apply: {}, dismiss: {}, hover: { _ in }))
+                let h = NSHostingView(rootView: NoteCard(note: note, active: false, busy: false, apply: {}, dismiss: {}, hover: { _ in }))
                 h.sizingOptions = [.intrinsicContentSize]
                 text.addSubview(h)
                 cards[note.id] = h
@@ -698,6 +828,7 @@ final class EditorController: NSViewController {
             card.rootView = NoteCard(
                 note: note,
                 active: activeNote == note.id,
+                busy: ws.busy,
                 apply: { [weak self] in self?.apply(note) },
                 dismiss: { [weak self] in
                     Ledger.event("note-dismissed", detail: "\(note.lens ?? "-"): \(note.note)")
@@ -717,30 +848,80 @@ final class EditorController: NSViewController {
     }
 
     private func apply(_ note: MarginNote) {
+        guard !ws.busy else { return }
         Ledger.event("note-applied", detail: "\(note.lens ?? "-"): \(note.note)")
         ws.margin.removeAll { $0.id == note.id }
-        let mode = ws.mode
-        ws.mode = .guided
-        ws.ask("Apply your note about \"\(note.quote)\": \(note.note)")
-        ws.mode = mode
+        ws.ask("Apply your note about \"\(note.quote)\": \(note.note)", mode: .guided)
     }
+}
+
+func stamp(_ date: Date, now: Date = .now) -> String {
+    let cal = Calendar.current
+    if cal.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
+    if cal.isDateInYesterday(date) { return "Yesterday" }
+    if let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: now)).day, days < 7 {
+        return date.formatted(.dateTime.weekday(.wide))
+    }
+    if cal.component(.year, from: date) == cal.component(.year, from: now) { return date.formatted(.dateTime.day().month(.abbreviated)) }
+    return date.formatted(.dateTime.day().month(.abbreviated).year())
 }
 
 struct Sidebar: View {
     @Bindable var ws: Workspace
+    @Bindable var chrome: Chrome
     var settings: () -> Void = {}
     @State private var renaming: Note?
     @State private var name = ""
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+
+    private var shown: [Note] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return ws.notes }
+        let lower = q.lowercased()
+        return ws.notes.filter { $0.title.localizedStandardContains(q) }.sorted { a, b in
+            let pa = a.title.lowercased().hasPrefix(lower), pb = b.title.lowercased().hasPrefix(lower)
+            return pa != pb ? pa : a.modified > b.modified
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Color.soft)
+                TextField("Search notes", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .focused($searchFocused)
+                    .onSubmit {
+                        if let first = shown.first { ws.open(first.url) }
+                        query = ""
+                        chrome.searching = false
+                    }
+                    .onExitCommand {
+                        query = ""
+                        chrome.searching = false
+                    }
+                if query.isEmpty {
+                    Keycap("⌘P")
+                } else {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 11)) }
+                        .buttonStyle(.plain).foregroundStyle(Color.soft)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.ink.opacity(0.05)))
+            .padding(.horizontal, 10)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
             List(selection: Binding(get: { ws.current }, set: { if let url = $0 { ws.open(url) } })) {
                 Section {
-                    ForEach(ws.notes) { note in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(note.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    ForEach(shown) { note in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(note.title).font(.serif(15.5, .medium)).lineLimit(1)
                             TimelineView(.everyMinute) { _ in
-                                Text(note.modified, format: .relative(presentation: .named))
+                                Text(stamp(note.modified))
                             }
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                         }
@@ -755,7 +936,7 @@ struct Sidebar: View {
                     }
                 } header: {
                     HStack {
-                        Text(ws.vault.lastPathComponent)
+                        Text(ws.title)
                         Spacer()
                         Button { ws.create() } label: { Image(systemName: "square.and.pencil") }
                             .buttonStyle(.plain).help("New note (⌘N)")
@@ -763,12 +944,19 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            .overlay {
+                if shown.isEmpty, !query.isEmpty {
+                    Text("No notes match “\(query)”").font(.system(size: 12)).foregroundStyle(Color.soft)
+                }
+            }
             AgentBadge(ws: ws, settings: settings)
         }
+        .onChange(of: chrome.searching) { _, on in searchFocused = on }
+        .onChange(of: searchFocused) { _, on in if !on { chrome.searching = false } }
         .alert("Rename note", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $name)
             Button("Rename") {
-                if let r = renaming, let problem = ws.rename(r, to: name) { ws.phase = .failed(problem) }
+                if let r = renaming, let problem = ws.rename(r, to: name) { ws.fail(problem) }
                 renaming = nil
             }
             Button("Cancel", role: .cancel) { renaming = nil }
@@ -782,7 +970,7 @@ struct EmptyState: View {
         if ws.current == nil {
             VStack(spacing: 10) {
                 Text(ws.notes.isEmpty ? "No notes yet" : "No note open")
-                    .font(.serif(22, .semibold)).foregroundStyle(Color.ink)
+                    .font(.serif(24, .medium)).foregroundStyle(Color.ink)
                 Button { ws.create() } label: {
                     HStack(spacing: 6) { Text("New note"); Keycap("⌘N") }
                 }
@@ -808,9 +996,13 @@ struct AgentBadge: View {
         }
         switch ws.available(ws.spec) {
         case true?: return (.soft, nil)
-        case false?: return (.redInk, ws.spec.requires == nil ? "Needs a key" : ws.spec.requires == "npx" ? "Needs Node" : "Not installed")
+        case false?: return (.redInk, ws.spec.missing)
         case nil: return (.faint, nil)
         }
+    }
+
+    private var detail: String {
+        [ws.model?.name, ws.mode == .guided ? "Guided edits" : "Margin notes"].compactMap { $0 }.joined(separator: " · ")
     }
 
     var body: some View {
@@ -822,6 +1014,12 @@ struct AgentBadge: View {
                 }
             }
             .pickerStyle(.inline)
+            if !ws.models.isEmpty {
+                Picker("Model", selection: Binding(get: { ws.model?.id ?? "" }, set: { ws.choose(model: $0) })) {
+                    ForEach(ws.models) { m in Text(m.name).tag(m.id) }
+                }
+                .pickerStyle(.inline)
+            }
             Picker("Answer with", selection: $ws.mode) {
                 Text("Guided Edits").tag(Mode.guided)
                 Text("Margin Notes").tag(Mode.notes)
@@ -834,7 +1032,7 @@ struct AgentBadge: View {
                 Circle().fill(dot).frame(width: 6, height: 6)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(ws.spec.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.ink)
-                    Text(note ?? (ws.mode == .guided ? "Guided edits" : "Margin notes"))
+                    Text(note ?? detail)
                         .font(.system(size: 11)).foregroundStyle(note == nil ? Color.soft : dot)
                 }
                 .lineLimit(1)
@@ -856,28 +1054,36 @@ struct AgentBadge: View {
         .animation(.easeOut(duration: 0.12), value: hovering)
         .padding(.horizontal, 10)
         .padding(.bottom, 10)
-        .help("Co-writer and how it answers")
-        .accessibilityLabel("\(ws.spec.name), \(note ?? (ws.mode == .guided ? "guided edits" : "margin notes"))")
+        .help("Co-writer, model, and how it answers")
+        .accessibilityLabel("\(ws.spec.name), \(note ?? detail)")
     }
 }
 
 struct SettingsView: View {
     @Bindable var ws: Workspace
+    @Bindable var chrome: Chrome
     @State private var key = Keychain.read("anthropic") ?? ""
     @State private var measuring = false
 
     private var learning: String {
         let turns = Ledger.read(TurnRecord.self, from: Ledger.turns)
-        let edits = turns.flatMap(\.exchanges)
-        guard !edits.isEmpty else { return "Quill measures your notes and learns from every edit you keep, undo, or rewrite. All of it stays on this Mac." }
+        let edits = turns.flatMap(\.exchanges).filter { $0.outcome != .unreviewed }
+        guard !edits.isEmpty else { return "Quill measures your notes and learns from every change you keep, revert, or rewrite. All of it stays on this Mac." }
         let kept = edits.filter { $0.outcome == .kept }.count
-        return "Learned from \(edits.count) edits across \(turns.count) requests. You kept \(kept * 100 / edits.count)%. Everything stays on this Mac."
+        return "Learned from \(edits.count) reviewed changes across \(turns.count) requests. You kept \(kept * 100 / edits.count)%. Everything stays on this Mac."
     }
 
     private func setSources(_ urls: [URL]) {
-        UserDefaults.standard.set(urls.filter { $0 != ws.vault }.map(\.path), forKey: "voiceSources")
+        Prefs.voiceSources = urls.filter { $0 != ws.vault }.map(\.path)
         measuring = true
         Task { await ws.measure(); measuring = false }
+    }
+
+    private func saveKey() {
+        let clean = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean != (Keychain.read("anthropic") ?? "") else { return }
+        Keychain.write("anthropic", clean)
+        ws.hasKey = Keychain.anthropicKey?.isEmpty == false
     }
 
     var body: some View {
@@ -886,18 +1092,35 @@ struct SettingsView: View {
                 ForEach(AgentSpec.all) { spec in
                     row(spec)
                 }
+                if !ws.models.isEmpty {
+                    Picker("Model", selection: Binding(get: { ws.model?.id ?? "" }, set: { ws.choose(model: $0) })) {
+                        ForEach(ws.models) { m in Text(m.name).tag(m.id) }
+                    }
+                }
             }
             Section {
                 SecureField("API key", text: $key, prompt: Text("sk-ant-…"))
+                    .onSubmit(saveKey)
                     .onChange(of: key) {
-                        Keychain.write("anthropic", key)
-                        ws.hasKey = Keychain.anthropicKey?.isEmpty == false
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(600))
+                            saveKey()
+                        }
                     }
             } header: {
                 Text("Anthropic API")
             } footer: {
                 Text("Stored in your Keychain. Used only when Anthropic API is the co-writer.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Hold to talk", selection: $chrome.talkKey) {
+                    ForEach(TalkKey.allCases) { k in Text(k.title).tag(k) }
+                }
+                Text("Or press ⇧⌘K to start talking and ↩ to send, without holding a key.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            } header: {
+                Text("Talk")
             }
             Section {
                 let sources = ws.voiceSources
@@ -938,16 +1161,17 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 Text(ws.mode == .guided
-                     ? "Quill edits the text while you watch. One ⌘Z takes a turn back."
-                     : "Quill leaves notes in the margin. Click a note to apply it.")
+                     ? "Changes land in the text, tinted until you keep or revert them. One ⌘Z takes a request back."
+                     : "Quill leaves notes in the margin. Click Apply on a note to make the edit.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .tint(Color.accentInk)
-        .frame(width: 460)
+        .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { ws.checkAgents() }
+        .onDisappear(perform: saveKey)
     }
 
     private func row(_ spec: AgentSpec) -> some View {
@@ -965,8 +1189,7 @@ struct SettingsView: View {
             case true?:
                 Text("Ready").font(.system(size: 11)).foregroundStyle(Color.greenInk)
             case false?:
-                Text(spec.requires == nil ? "Needs a key" : spec.requires == "npx" ? "Needs Node" : "Not installed")
-                    .font(.system(size: 11)).foregroundStyle(Color.soft)
+                Text(spec.missing).font(.system(size: 11)).foregroundStyle(Color.soft)
             case nil:
                 ProgressView().controlSize(.mini)
             }

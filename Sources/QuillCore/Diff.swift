@@ -140,3 +140,39 @@ public func replacing(_ edits: [(find: String, replace: String)], in text: Strin
     }
     return apply(found, to: text)
 }
+
+public struct ItemScanner: Sendable {
+    private var bytes: [UInt8] = []
+    private var depth = 0
+    private var quoted = false
+    private var escaped = false
+    private var closed = 0
+
+    public init() {}
+
+    public var raw: String { String(decoding: bytes, as: UTF8.self) }
+
+    public mutating func feed(_ chunk: String) -> String? {
+        let start = bytes.count
+        bytes.append(contentsOf: chunk.utf8)
+        var found: Int?
+        for i in start..<bytes.count {
+            let b = bytes[i]
+            if quoted {
+                if escaped { escaped = false } else if b == 0x5C { escaped = true } else if b == 0x22 { quoted = false }
+                continue
+            }
+            switch b {
+            case 0x22: quoted = true
+            case 0x7B, 0x5B: depth += 1
+            case 0x7D, 0x5D:
+                depth -= 1
+                if b == 0x7D, depth == 2 { found = i }
+            default: break
+            }
+        }
+        guard let found, found > closed else { return nil }
+        closed = found
+        return String(decoding: bytes[...found], as: UTF8.self) + "]}"
+    }
+}

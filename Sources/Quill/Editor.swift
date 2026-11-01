@@ -19,20 +19,23 @@ enum Theme {
         }
     }
 
-    static let paper = color(0xFBFAF7, 0x161615)
-    static let ink = color(0x22211F, 0xE8E6E1)
-    static let soft = color(0x75716A, 0x9C988F)
-    static let faint = color(0xBDB8AE, 0x52504B)
-    static let accent = color(0x3D5BD9, 0x8FA6FF)
-    static let red = color(0xDC3E42, 0xFF6B6E)
-    static let green = color(0x2B9A66, 0x4CC38A)
-    static let wash = color(0xF1EFEA, 0x222220)
+    static let paper = color(0xF7F2E8, 0x17140F)
+    static let ink = color(0x1F1A14, 0xE9E1D2)
+    static let soft = color(0x6F6556, 0xA69C8A)
+    static let faint = color(0xBDB3A1, 0x4F473B)
+    static let accent = color(0xA33B2B, 0xE07A62)
+    static let red = color(0xA33B2B, 0xE07A62)
+    static let green = color(0x4E7A5A, 0x7FB08A)
+    static let wash = color(0xEFE7D8, 0x231E17)
+    static let pending = color(0xF3E3D6, 0x2E1F19)
 
-    static let size: CGFloat = 18
-    static let column: CGFloat = 608
+    static let size: CGFloat = 20
+    static let column: CGFloat = 620
     static let hang: CGFloat = 48
 
     static func serif(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
+        let garamond = NSFontDescriptor(fontAttributes: [.family: "EB Garamond", .traits: [NSFontDescriptor.TraitKey.weight: weight]])
+        if let font = NSFont(descriptor: garamond, size: size), font.familyName == "EB Garamond" { return font }
         let base = NSFont.systemFont(ofSize: size, weight: weight)
         return base.fontDescriptor.withDesign(.serif).flatMap { NSFont(descriptor: $0, size: size) } ?? base
     }
@@ -46,7 +49,7 @@ enum Theme {
     }
 
     static let body = serif(size)
-    static let mono = NSFont.monospacedSystemFont(ofSize: size - 3.5, weight: .regular)
+    static let mono = NSFont.monospacedSystemFont(ofSize: size - 5, weight: .regular)
     static let hidden = NSFont.systemFont(ofSize: 0.01)
 
     static func paragraph(lineHeight: CGFloat, before: CGFloat = 0, after: CGFloat = 0, indent: CGFloat = 0, hanging: CGFloat = 0) -> NSParagraphStyle {
@@ -64,34 +67,48 @@ enum Theme {
         ceil((s as NSString).size(withAttributes: [.font: font]).width)
     }
 
-    static let bodyParagraph = paragraph(lineHeight: 30)
+    static let bodyParagraph = paragraph(lineHeight: 31)
     static let gap = paragraph(lineHeight: 16)
 
     static var bodyAttributes: [NSAttributedString.Key: Any] {
         [.font: body, .foregroundColor: ink, .paragraphStyle: bodyParagraph, .baselineOffset: 0]
     }
 
+    static let headings = [serif(34, .medium), serif(27, .medium), serif(23, .medium), serif(size, .semibold)]
+
     static func headingFont(_ level: Int) -> NSFont {
-        switch level {
-        case 1: serif(32, .semibold)
-        case 2: serif(25, .semibold)
-        case 3: serif(21, .semibold)
-        default: serif(size, .semibold)
-        }
+        headings[min(max(level, 1), 4) - 1]
     }
+}
+
+enum EditSource {
+    case agent(turn: Int, flags: [String])
+    case other
+    case restore
+}
+
+extension UndoManager.UserInfoKey {
+    static let turn = UndoManager.UserInfoKey(rawValue: "QuillTurn")
 }
 
 @MainActor
 final class QuillTextView: NSTextView {
     var onEdit: (() -> Void)?
-    var onUndo: ((Int) -> Void)?
-    var undoTag = 0
-    var beforeKey: (() -> Void)?
+    var onUndo: ((String, Bool) -> Void)?
+    var onResolve: (([Hunk], Outcome) -> Void)?
+    var onReview: (() -> Void)?
+    var onCaret: (() -> Void)?
+    var onHover: ((Int?) -> Void)?
+    var beforeKey: ((NSEvent?) -> Bool)?
     var gutter = false {
         didSet { if gutter != oldValue { setFrameSize(frame.size) } }
     }
+    private(set) var review = Review()
     private var activeLines = NSRange(location: 0, length: 0)
-    private var pending: NSRange?
+    private var pending: [NSRange] = []
+    private var crossed: [Hunk] = []
+    private var programmatic = false
+    private var reviewed = 0
     private var marks: [NSRange: [NSAttributedString.Key: Any]] = [:]
     let fx = CALayer()
 
@@ -167,14 +184,60 @@ final class QuillTextView: NSTextView {
         NSPoint(x: textContainerInset.width, y: Self.top)
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas where area.userInfo?["quill"] != nil { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: ["quill": true]))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        let index = characterIndexForInsertion(at: point)
+        let over = review.hunk(at: index).map { h in segments(h.range).contains { $0.insetBy(dx: -2, dy: -2).contains(point) } } ?? false
+        onHover?(over ? index : nil)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onHover?(nil)
+    }
+
     override func keyDown(with event: NSEvent) {
-        beforeKey?()
+        if beforeKey?(event) == true { return }
         super.keyDown(with: event)
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
-        beforeKey?()
+        _ = beforeKey?(nil)
         super.insertText(string, replacementRange: replacementRange)
+    }
+
+    @objc func undo(_ sender: Any?) { step(back: true) }
+    @objc func redo(_ sender: Any?) { step(back: false) }
+
+    private func step(back: Bool) {
+        _ = beforeKey?(nil)
+        guard let um = undoManager, back ? um.canUndo : um.canRedo else { return }
+        func top() -> (String, Int?) {
+            back ? (um.undoActionName, um.undoActionUserInfoValue(forKey: .turn) as? Int)
+                 : (um.redoActionName, um.redoActionUserInfoValue(forKey: .turn) as? Int)
+        }
+        let first = top()
+        back ? um.undo() : um.redo()
+        guard first.0 == "Changes", let turn = first.1 else { return }
+        while back ? um.canUndo : um.canRedo, top() == ("Changes", turn) {
+            back ? um.undo() : um.redo()
+        }
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        guard item.action == #selector(undo(_:)) || item.action == #selector(redo(_:)), let um = undoManager else {
+            return super.validateUserInterfaceItem(item)
+        }
+        let back = item.action == #selector(undo(_:))
+        (item as? NSMenuItem)?.title = back ? um.undoMenuItemTitle : um.redoMenuItemTitle
+        return back ? um.canUndo : um.canRedo
     }
 
     @objc func bold(_ sender: Any?) { wrap("**") }
@@ -232,10 +295,15 @@ final class QuillTextView: NSTextView {
         get { string }
         set {
             marks = [:]
+            review = Review()
+            programmatic = true
             string = newValue
-            pending = nil
+            programmatic = false
+            pending = []
+            crossed = []
             restyle(NSRange(location: 0, length: (string as NSString).length))
             undoManager?.removeAllActions()
+            onReview?()
         }
     }
 
@@ -272,13 +340,64 @@ final class QuillTextView: NSTextView {
         for (r, _) in touched where NSMaxRange(r) <= len { restyle(r) }
     }
 
-    func replace(_ r: NSRange, with s: String) {
+    func replace(_ r: NSRange, with s: String, by source: EditSource = .other) {
         guard let storage = textStorage else { return }
         marks = marks.filter { NSMaxRange($0.key) <= r.location }
+        let before = NSString(string: string)
+        programmatic = true
         storage.beginEditing()
         storage.replaceCharacters(in: r, with: NSAttributedString(string: s, attributes: Theme.bodyAttributes))
         storage.endEditing()
+        programmatic = false
+        let span = review.hunks.map(\.range)
+        switch source {
+        case .agent(let turn, let flags):
+            review.agent(r, before: before, after: NSString(string: string), turn: turn, flags: flags)
+        case .other:
+            cross(r, length: (s as NSString).length)
+        case .restore:
+            break
+        }
+        pending += span + review.hunks.map(\.range)
         flush()
+    }
+
+    private func cross(_ r: NSRange, length n: Int) {
+        let delta = n - r.length
+        crossed += review.user(r, length: n).map { h in
+            var h = h
+            let lo = min(h.range.location, r.location)
+            h.range = NSRange(location: lo, length: max(NSMaxRange(h.range), NSMaxRange(r)) + delta - lo)
+            return h
+        }
+    }
+
+    func setReview(_ next: Review) {
+        pending += review.hunks.map(\.range) + next.hunks.map(\.range)
+        review = next
+        flush()
+    }
+
+    func keep(_ hunks: [Hunk]) {
+        let before = review
+        var next = review
+        let gone = hunks.compactMap { next.remove($0.id) }
+        guard !gone.isEmpty else { return }
+        setReview(next)
+        onResolve?(gone.filter { !$0.touched }, .kept)
+        onResolve?(gone.filter(\.touched), .rewritten)
+        record([], name: gone.count == 1 ? "Keep Change" : "Keep Changes", turn: 0, before: before, after: review, back: true)
+    }
+
+    func revert(_ hunks: [Hunk]) {
+        let before = review
+        var next = review
+        let gone = hunks.compactMap { next.remove($0.id) }
+        guard !gone.isEmpty else { return }
+        setReview(next)
+        onResolve?(gone, .reverted)
+        let inverse = commit(gone.map { Change(range: $0.range, text: $0.old) }, by: .other)
+        record(inverse, name: gone.count == 1 ? "Revert Change" : "Revert Changes", turn: 0, before: before, after: review, back: true)
     }
 
     override func didChangeText() {
@@ -287,12 +406,35 @@ final class QuillTextView: NSTextView {
     }
 
     private func flush() {
-        guard let r = pending else { return }
-        pending = nil
+        guard !pending.isEmpty || !crossed.isEmpty else { return }
+        let ranges = pending
+        pending = []
         let text = string as NSString
-        let clamped = NSIntersectionRange(r, NSRange(location: 0, length: text.length))
-        let lines = text.lineRange(for: NSRange(location: clamped.location, length: clamped.length))
-        restyle(text.substring(with: lines).contains("```") ? NSRange(location: 0, length: text.length) : lines)
+        let all = NSRange(location: 0, length: text.length)
+        var whole = false
+        var lines: [NSRange] = []
+        for r in ranges {
+            let clamped = NSIntersectionRange(r, all)
+            let line = text.lineRange(for: NSRange(location: min(r.location, text.length), length: clamped.length))
+            if text.substring(with: line).contains("```") { whole = true }
+            lines.append(line)
+        }
+        if whole { restyle(all) } else { lines.forEach(restyle) }
+        if !crossed.isEmpty {
+            let gone = crossed
+            crossed = []
+            onResolve?(gone.map { h in
+                var h = h
+                let lo = min(h.range.location, all.length)
+                h.range = NSRange(location: lo, length: min(NSMaxRange(h.range), all.length) - lo)
+                return h
+            }, .rewritten)
+        }
+        if review.hunks.contains(where: { $0.range.length == 0 }) || reviewed != review.hunks.count {
+            reviewed = review.hunks.count
+            setNeedsDisplay(visibleRect)
+        }
+        onReview?()
         onEdit?()
     }
 
@@ -375,6 +517,16 @@ final class QuillTextView: NSTextView {
                 storage.addAttributes([.font: Theme.hidden, .foregroundColor: NSColor.clear], range: marker)
             }
         }
+        for h in review.hunks where h.range.length > 0 {
+            let overlap = NSIntersectionRange(h.range, full)
+            guard overlap.length > 0 else { continue }
+            let flagged = !h.flags.isEmpty
+            storage.addAttributes([
+                .backgroundColor: Theme.pending,
+                .underlineStyle: (flagged ? NSUnderlineStyle([.single, .patternDot]) : .single).rawValue,
+                .underlineColor: Theme.accent.withAlphaComponent(flagged ? 0.95 : 0.45),
+            ], range: overlap)
+        }
         for (r, attributes) in marks {
             let overlap = NSIntersectionRange(r, full)
             if overlap.length > 0 { storage.addAttributes(attributes, range: overlap) }
@@ -398,6 +550,11 @@ final class QuillTextView: NSTextView {
             }
             return true
         }
+        Theme.accent.setFill()
+        for h in review.hunks where h.range.length == 0 {
+            guard let seg = segments(NSRange(location: h.range.location, length: 0)).first, seg.intersects(rect.insetBy(dx: 0, dy: -40)) else { continue }
+            NSBezierPath(roundedRect: NSRect(x: seg.minX - 1, y: seg.minY + 6, width: 2, height: max(seg.height - 12, 12)), xRadius: 1, yRadius: 1).fill()
+        }
     }
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
@@ -412,6 +569,7 @@ final class QuillTextView: NSTextView {
             if NSMaxRange(old) <= text.length { restyle(old) }
             restyle(lines)
         }
+        onCaret?()
     }
 }
 
@@ -419,7 +577,9 @@ extension QuillTextView: NSTextStorageDelegate {
     nonisolated func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions, range editedRange: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters) else { return }
         MainActor.assumeIsolated {
-            pending = pending.map { NSUnionRange($0, editedRange) } ?? editedRange
+            pending.append(editedRange)
+            guard !programmatic else { return }
+            cross(NSRange(location: editedRange.location, length: editedRange.length - delta), length: editedRange.length)
         }
     }
 }

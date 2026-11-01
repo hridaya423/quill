@@ -1,5 +1,22 @@
 # Progress
 
+## Audit implementation (2026-11-01, in progress)
+Source: the harsh audit in this session. Phases, in order. Mark each done with evidence.
+
+1. [x] Foundations: typed `Prefs` with a `QUILL_DEFAULTS` suite; one cached login-shell PATH (`Shell`); bundled `editorialGuide` (no ~/.claude dependency); voice notes win over the guide; tell gate allows the writer's own habits (`habitualTells`, stored at measure time); "not only" no longer trips negative parallelism.
+2. [x] Loop: agents edit `Application Support/Quill/desk/<note>.md`, never the vault. `Review` (QuillCore) tracks pending changes through agent, user, undo, and revert edits. The vault gets `review.accepted(text)` only. Undo groups a turn's batches by turn id (`UndoManager` user info). Choreography strikes all, replaces once, types in together. Space lands an animation when you aren't typing. Held edits retry with the reason in the pill, then land flagged. Reply history in the command bar. Errors stay. Notes from `<notes>` tags or the API notes tool. Apply refused during a turn. `ask(_:mode:)` overrides mode per turn. Ledger records each change when it resolves (kept, reverted, rewritten, undone, unreviewed).
+3. [~] Model: ACP sets `model` and `effort=low`; Codex passes model per turn; API offers Opus/Sonnet/Haiku 5.5. Badge, menu, and settings show and change it. Onboarding not yet.
+4. [x] UI: one glass pill with review row; change card on hover and caret (old text, flags, Keep ⌘↩, Revert ⌘⌫); ⇧⌘↩/⇧⌘⌫ all; ⌘]/⌘[ next/previous; sidebar search focused by ⌘P, real dates, folder display name; settings model picker, talk key, key saved on pause; talk key choice and ⇧⌘K toggle (↩ sends).
+5. [x] Brand: EB Garamond editor and chrome, vellum paper, rubric accent (light and dark), accent asset moved to rubric.
+6. [ ] Onboarding: Begin early and skippable; folder and voice on one step; co-writer, model, and mode on one step; practice page outside the vault (done: `Practice/Your first edit.md`); recent non-journal sentence; no post-turn chooser (done).
+7. [x] API agent: checked against the claude-api skill (version 2026-10-21, `fallbacks: "default"` only for Opus/Sonnet, effort low, strict tools, eager input streaming, refusal and max_tokens stops). Edits stream in as each completes (`ItemScanner`). `leave_notes` tool.
+8. [ ] Evidence: core tests for `Review` and `ItemScanner` pass; typing benchmark at parity (warm p50 1.9 ms, cold 8.5 ms vs 2.0/9.4 on HEAD); snapshots in build/snap2 inspected; one live run (build/e2e-loop) showed the desk copy edited by Claude Code on Opus 5.5 and three pending changes recorded. Still to do: scripted-agent loop tests, replayed ACP/Codex sessions, live latency without driving the GUI, docs.
+
+Notes:
+- The real app's defaults were contaminated by older e2e runs (mode=notes, choseMode). e2e now uses the `app.quill.e2e` suite and its own support folder. The real defaults were not reset.
+- Offscreen snapshots draw the sidebar selection as a black block and dark text in dark mode. The live window (build/e2e-loop/frames/0015.png) draws it correctly.
+- The live e2e run lost its window mid-turn and was interrupted; someone was likely using the Mac. Don't drive the GUI with keystrokes while the machine is in use.
+
 ## Done
 - Core: word diff, three-way merge, Markdown styling, prompts, and margin-note parsing in `QuillCore`, with 23 tests.
 - Editor: TextKit 2 view, hidden Markdown markers that show on the active line, a 608 pt column, and light and dark themes.

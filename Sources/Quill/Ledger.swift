@@ -87,7 +87,11 @@ final class VoiceKeeper {
     }
 
     func measure(_ folders: [URL]) async -> Fingerprint {
-        let found = await Task.detached { fingerprint(Self.corpus(folders)) }.value
+        let (found, habits) = await Task.detached {
+            let corpus = Self.corpus(folders)
+            return (fingerprint(corpus), habitualTells(corpus))
+        }.value
+        Prefs.ownTells = habits
         let notes = folders.count == 1 ? "1 folder" : "\(folders.count) folders"
         let existing = try? String(contentsOf: url, encoding: .utf8)
         if found.words >= 150 {
@@ -96,15 +100,15 @@ final class VoiceKeeper {
         } else if existing == nil {
             try? voiceDocument(existing: nil).write(to: url, atomically: true, encoding: .utf8)
         }
-        UserDefaults.standard.set(Date.now.timeIntervalSince1970, forKey: "measuredAt")
+        Prefs.measuredAt = Date.now.timeIntervalSince1970
         return found
     }
 
     func distillIfDue() {
         let records = Ledger.read(TurnRecord.self, from: Ledger.turns)
-        let done = UserDefaults.standard.integer(forKey: "distilledThrough")
+        let done = Prefs.distilledThrough
         guard !distilling, records.count - done >= Self.every else { return }
-        let recent = records.suffix(40).flatMap(\.exchanges)
+        let recent = records.suffix(40).flatMap(\.exchanges).filter { $0.outcome != .unreviewed }
         guard !recent.isEmpty else { return }
         distilling = true
         let voice = (try? String(contentsOf: url, encoding: .utf8)) ?? voiceDocument(existing: nil)
@@ -119,8 +123,8 @@ final class VoiceKeeper {
             }
             var reply = ""
             do {
-                try await agent.prepare(cwd: cwd)
-                try await agent.send(body, base: "") { event in
+                try await agent.prepare(cwd: cwd, readable: [])
+                try await agent.send(body, file: nil, base: "") { event in
                     if case .text(let t) = event { reply += t }
                 }
             } catch {
@@ -130,19 +134,8 @@ final class VoiceKeeper {
             guard let rules = learnedRules(from: reply) else { return }
             let current = (try? String(contentsOf: url, encoding: .utf8)) ?? voice
             try? voiceDocument(existing: current, learned: rules).write(to: url, atomically: true, encoding: .utf8)
-            UserDefaults.standard.set(records.count, forKey: "distilledThrough")
+            Prefs.distilledThrough = records.count
             Ledger.event("distilled", detail: "\(recent.count) exchanges")
         }
     }
-}
-
-enum Floor {
-    static let text: String = {
-        let root = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/skills/prose")
-        let skill = try? String(contentsOf: root.appending(path: "SKILL.md"), encoding: .utf8)
-        let refs = ["tell-catalog.md", "anti-slop.md", "craft.md"].compactMap {
-            try? String(contentsOf: root.appending(path: "references/\($0)"), encoding: .utf8)
-        }
-        return editorialFloor(skill: skill, references: refs)
-    }()
 }
