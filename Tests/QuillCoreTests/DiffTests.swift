@@ -104,3 +104,18 @@ struct SplitMix {
         return Int((z ^ (z >> 31)) % UInt64(bound))
     }
 }
+
+@Test func userEditsOnBothSidesOfAShortWordLeaveTheAgentEditToIt() {
+    let base = "cat and dog", mine = "fox and pig", theirs = "cat or dog"
+    #expect(apply(merge(base: base, current: mine, proposed: theirs), to: mine) == "fox or pig")
+}
+
+@Test func replacementsResolveAgainstTheOriginalText() {
+    #expect(replacing([("red", "blue"), ("blue", "green")], in: "red blue") == "blue green")
+}
+
+@Test func replacementsRefuseMissingOrAmbiguousText() {
+    #expect(replacing([("gone", "x")], in: "red blue") == nil)
+    #expect(replacing([("a", "x")], in: "a a") == nil)
+    #expect(replacing([("red blue", "x"), ("blue", "y")], in: "red blue") == nil)
+}

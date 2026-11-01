@@ -84,8 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        ws.choreographer?.land()
-        ws.flushSave()
+        ws.quit()
     }
 
     private func seed(_ vault: URL) {
@@ -328,6 +327,14 @@ final class EditorController: NSViewController {
     }
 
     private func listen() {
+        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.holding else { return }
+                self.holding = false
+                self.ws.listener.cancel()
+                self.ws.phase = .idle
+            }
+        }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             guard let self, event.window == self.view.window else { return event }
             if event.type == .keyDown {
@@ -344,14 +351,15 @@ final class EditorController: NSViewController {
                 return event
             }
             guard event.keyCode == 61 else { return event }
-            let down = event.modifierFlags.contains(.option) && event.modifierFlags.intersection([.command, .control, .shift]).isEmpty
+            let rightOption: UInt = 0x40
+            let down = event.modifierFlags.rawValue & rightOption != 0 && event.modifierFlags.intersection([.command, .control, .shift]).isEmpty
             if down, !self.holding { self.press() } else if !down, self.holding { self.release() }
             return event
         }
     }
 
     private func press() {
-        guard case let phase = ws.phase, !isThinking(phase) else { return }
+        guard !isThinking(ws.phase) else { return }
         holding = true
         chord = false
         chrome.commanding = false

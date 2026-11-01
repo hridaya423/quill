@@ -18,6 +18,7 @@ protocol Agent: AnyObject {
     func prepare(cwd: URL) async throws
     func send(_ prompt: String, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws
     func cancel()
+    func shutdown()
 }
 
 struct AgentSpec: Identifiable, Hashable {
@@ -249,8 +250,13 @@ final class ACPAgent: Agent {
     }
 
     func cancel() {
-        guard let session else { return }
+        guard let session else { return shutdown() }
         rpc?.notify("session/cancel", ["sessionId": session])
+    }
+
+    func shutdown() {
+        rpc?.stop()
+        session = nil
     }
 
     private func answer(_ method: String, _ params: [String: Any]) -> [String: Any] {
@@ -270,10 +276,13 @@ final class ACPAgent: Agent {
             let options = params["options"] as? [[String: Any]] ?? []
             let call = params["toolCall"] as? [String: Any] ?? [:]
             let kind = call["kind"] as? String ?? "other"
-            let paths = (call["locations"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String }
-            let safe = ["read", "edit", "search", "think", "fetch"].contains(kind) && paths.allSatisfy { inside($0, cwd) }
-            let option = options.first { $0["kind"] as? String == (safe ? "allow_once" : "reject_once") }
-                ?? options.first { ($0["kind"] as? String)?.hasPrefix(safe ? "allow" : "reject") == true }
+            let locations = call["locations"] as? [[String: Any]] ?? []
+            let paths = locations.compactMap { $0["path"] as? String }
+            let inVault = !paths.isEmpty && paths.count == locations.count && paths.allSatisfy { inside($0, cwd) }
+            let safe = ["think", "fetch"].contains(kind) || (["read", "edit", "search"].contains(kind) && inVault)
+            let option = safe
+                ? options.first { $0["kind"] as? String == "allow_once" }
+                : options.first { ($0["kind"] as? String)?.hasPrefix("reject") == true }
             guard let id = option?["optionId"] else { return ["result": ["outcome": ["outcome": "cancelled"]]] }
             return ["result": ["outcome": ["outcome": "selected", "optionId": id]]]
         default:
@@ -373,8 +382,13 @@ final class CodexAgent: Agent {
         }
     }
 
+    func shutdown() {
+        rpc?.stop()
+        thread = nil
+    }
+
     func cancel() {
-        guard let thread, let turn else { return }
+        guard let thread, let turn else { return shutdown() }
         Task { _ = try? await rpc?.request("turn/interrupt", ["threadId": thread, "turnId": turn]) }
     }
 
@@ -436,12 +450,13 @@ enum Keychain {
 @MainActor
 final class AnthropicAgent: Agent {
     let canEditFiles = false
-    private var task: Task<Void, Error>?
     private var previous: String?
 
     func prepare(cwd: URL) async throws {}
 
-    func cancel() { task?.cancel() }
+    func cancel() {}
+
+    func shutdown() {}
 
     func send(_ prompt: String, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
         guard let key = Keychain.anthropicKey, !key.isEmpty else {
@@ -497,6 +512,7 @@ final class AnthropicAgent: Agent {
         var reply = ""
         var json: [Int: String] = [:]
         var working = base
+        var complete = false
         for try await line in bytes.lines {
             guard line.hasPrefix("data: "), let event = try JSONSerialization.jsonObject(with: Data(line.dropFirst(6).utf8)) as? [String: Any] else { continue }
             let index = event["index"] as? Int ?? 0
@@ -515,24 +531,23 @@ final class AnthropicAgent: Agent {
                 guard let input = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
                       let edits = input["edits"] as? [[String: String]]
                 else { throw AgentError(message: "The edit came back malformed. Try again.") }
-                let doc = NSMutableString(string: working)
-                for edit in edits {
-                    guard let find = edit["find"], let replace = edit["replace"], !find.isEmpty else { continue }
-                    let r = doc.range(of: find)
-                    if r.location != NSNotFound { doc.replaceCharacters(in: r, with: replace) }
-                }
-                working = doc as String
+                guard let next = replacing(edits.map { (find: $0["find"] ?? "", replace: $0["replace"] ?? "") }, in: working)
+                else { throw AgentError(message: "The edit didn't match the document. Try again.") }
+                working = next
                 events(.proposed(working))
             case "message_delta":
                 if (event["delta"] as? [String: Any])?["stop_reason"] as? String == "refusal" {
                     throw AgentError(message: "Claude declined that one.")
                 }
+            case "message_stop":
+                complete = true
             case "error":
                 throw AgentError(message: ((event["error"] as? [String: Any])?["message"] as? String) ?? "The API hit an error.")
             default:
                 break
             }
         }
+        guard complete else { throw AgentError(message: "The connection dropped. Try again.") }
         previous = "They said: \(prompt.components(separatedBy: "\n").dropFirst(2).first ?? "")\nYou replied: \(reply)"
     }
 }

@@ -33,7 +33,7 @@ func tokenize(_ s: String) -> [Substring] {
     return tokens
 }
 
-public func changes(from old: String, to new: String) -> [Change] {
+public func changes(from old: String, to new: String, coalesce: Bool = true) -> [Change] {
     if old == new { return [] }
     let a = tokenize(old), b = tokenize(new)
     let diff = b.difference(from: a)
@@ -72,7 +72,7 @@ public func changes(from old: String, to new: String) -> [Change] {
 
     var merged: [Hunk] = []
     for h in hunks {
-        if var last = merged.last, bridgeable(a[last.hi..<h.lo]) {
+        if coalesce, var last = merged.last, bridgeable(a[last.hi..<h.lo]) {
             last.hi = h.hi
             last.newHi = h.newHi
             merged[merged.count - 1] = last
@@ -101,7 +101,7 @@ public func apply(_ changes: [Change], to text: String) -> String {
 }
 
 public func merge(base: String, current: String, proposed: String) -> [Change] {
-    let mine = changes(from: base, to: current)
+    let mine = changes(from: base, to: current, coalesce: false)
     return changes(from: base, to: proposed).compactMap { theirs in
         let lo = theirs.range.location, hi = NSMaxRange(theirs.range)
         var shift = 0
@@ -125,4 +125,18 @@ public func shifted(_ changes: [Change]) -> [Change] {
         defer { shift += c.delta }
         return Change(range: NSRange(location: c.range.location + shift, length: c.range.length), text: c.text)
     }
+}
+
+public func replacing(_ edits: [(find: String, replace: String)], in text: String) -> String? {
+    let doc = text as NSString
+    var found: [Change] = []
+    for edit in edits {
+        let r = doc.range(of: edit.find)
+        guard !edit.find.isEmpty, r.location != NSNotFound,
+              doc.range(of: edit.find, range: NSRange(location: r.location + 1, length: doc.length - r.location - 1)).location == NSNotFound,
+              !found.contains(where: { NSIntersectionRange($0.range, r).length > 0 })
+        else { return nil }
+        found.append(Change(range: r, text: edit.replace))
+    }
+    return apply(found, to: text)
 }

@@ -43,6 +43,7 @@ final class Workspace {
     @ObservationIgnored var choreographer: Choreographer?
     @ObservationIgnored private var base = ""
     @ObservationIgnored private var inTurn = false
+    @ObservationIgnored private var turn = 0
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var settle: Task<Void, Never>?
     @ObservationIgnored private var stream: FSEventStreamRef?
@@ -67,7 +68,8 @@ final class Workspace {
     var spec: AgentSpec { AgentSpec.named(agentID) }
 
     private func swapAgent() {
-        agent.cancel()
+        endTurn()
+        agent.shutdown()
         agent = spec.make()
         warm()
     }
@@ -87,6 +89,7 @@ final class Workspace {
     }
 
     func switchVault(_ url: URL) {
+        endTurn()
         flushSave()
         if let stream { FSEventStreamStop(stream); FSEventStreamInvalidate(stream); FSEventStreamRelease(stream) }
         stream = nil
@@ -94,7 +97,7 @@ final class Workspace {
         UserDefaults.standard.set(url.path, forKey: "vault")
         current = nil
         editor?.text = ""
-        agent.cancel()
+        agent.shutdown()
         agent = spec.make()
         start()
     }
@@ -111,6 +114,7 @@ final class Workspace {
 
     func open(_ url: URL) {
         guard url != current else { return }
+        endTurn()
         choreographer?.land()
         flushSave()
         margin = []
@@ -162,7 +166,15 @@ final class Workspace {
     }
 
     func edited() {
-        if !margin.isEmpty, let editor { margin = margin.filter { NSMaxRange($0.range) <= (editor.string as NSString).length } }
+        if !margin.isEmpty, let editor {
+            let doc = editor.string as NSString
+            let moved = margin.compactMap { note -> MarginNote? in
+                var note = note
+                note.range = doc.range(of: note.quote, options: [.caseInsensitive, .diacriticInsensitive])
+                return note.range.location == NSNotFound ? nil : note
+            }
+            if moved != margin { margin = moved }
+        }
         guard !inTurn else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
@@ -198,7 +210,8 @@ final class Workspace {
         if choreographer.isBusy {
             guard settle == nil else { return }
             settle = Task { [weak self] in
-                while self?.choreographer?.isBusy == true { try? await Task.sleep(for: .milliseconds(60)) }
+                while self?.choreographer?.isBusy == true, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(60)) }
+                guard !Task.isCancelled else { return }
                 self?.settle = nil
                 self?.reconcile()
             }
@@ -243,6 +256,8 @@ final class Workspace {
         let request = Request(words: words, path: url.path, text: text, selection: selection, mode: mode)
         let body = prompt(request, canEditFiles: agent.canEditFiles)
         inTurn = true
+        turn += 1
+        let id = turn
         reply = ""
         margin = []
         turnStarted = CFAbsoluteTimeGetCurrent()
@@ -253,20 +268,27 @@ final class Workspace {
             var failure: String?
             do {
                 try await agent.prepare(cwd: vault)
+                guard turn == id else { return }
                 try await agent.send(body, base: text) { [weak self] event in
-                    guard let self else { return }
+                    guard let self, self.turn == id else { return }
                     switch event {
                     case .activity(let a):
                         if case .thinking = self.phase { self.phase = .thinking(a, words: words) }
                     case .text(let t):
                         self.reply += t
                     case .proposed(let next):
-                        if let editor = self.editor { self.propose(next, editor: editor) }
+                        do {
+                            try next.write(to: url, atomically: true, encoding: .utf8)
+                            self.reconcile()
+                        } catch {
+                            self.phase = .failed("Couldn't save \(url.lastPathComponent).")
+                        }
                     }
                 }
             } catch {
                 failure = error.localizedDescription
             }
+            guard turn == id else { return }
             await settleTurn(failure: failure, words: words)
         }
     }
@@ -296,10 +318,29 @@ final class Workspace {
     }
 
     func cancelTurn() {
-        if inTurn { agent.cancel() }
         if listener.isListening { listener.cancel() }
-        if case .thinking = phase { return }
+        if inTurn { endTurn() } else { phase = .idle }
+    }
+
+    func endTurn() {
+        guard inTurn else { return }
+        agent.cancel()
+        turn += 1
+        settle?.cancel()
+        settle = nil
+        choreographer?.land()
+        reconcile()
+        choreographer?.land()
+        inTurn = false
         phase = .idle
+        flushOrSave()
+    }
+
+    func quit() {
+        endTurn()
+        choreographer?.land()
+        flushSave()
+        agent.shutdown()
     }
 
     private func watch() {

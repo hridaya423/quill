@@ -12,12 +12,15 @@
 ## Remaining
 - Hover to revert a single change.
 - The first change from Claude takes 4.4 s at p50. The target is 3 s.
-- Verify a successful Anthropic API turn. Every key in envsync returns 401.
+- Verify a successful Anthropic API turn. The keys tried returned 401. Its proposals now take the same disk and reconcile path as Claude and Codex.
+- Undo groups follow animation batches, not turns. If an agent writes twice in one turn and the writer types between the writes, one ⌘Z does not remove the whole turn.
+- Test that the Codex sandbox keeps writes inside the vault.
 - Verify the live microphone path. It needs the permission dialog.
 - Verify Gemini and OpenCode. Neither CLI is installed.
 
 ## Evidence
-- `swift test`: 20 core tests and the keystroke benchmark pass.
+- `swift test`: 23 core tests and the keystroke benchmark pass.
+- Cross-model review by gpt-6.1-sol. Fixes were checked in the real app: `build/e2e-stop`, `build/e2e-quit` (and `build/e2e-quit-before`, which shows the bug before the fix), `build/e2e-typing2`, `build/e2e-notes2`.
 - `build/e2e-*`: frame captures from real-UI runs for Claude, Codex, Notes mode, and typing during a turn.
 - `~/Library/Logs/Quill/turns.tsv`: latency for each turn.
 - `decisions.tsv`: each decision with its reason and evidence.
