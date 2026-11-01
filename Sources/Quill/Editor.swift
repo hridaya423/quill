@@ -1,6 +1,10 @@
 import AppKit
 import QuillCore
 
+extension NSAttributedString.Key {
+    static let quote = NSAttributedString.Key("QuillQuote")
+}
+
 @MainActor
 enum Theme {
     static func color(_ light: UInt32, _ dark: UInt32) -> NSColor {
@@ -26,6 +30,7 @@ enum Theme {
 
     static let size: CGFloat = 18
     static let column: CGFloat = 640
+    static let hang: CGFloat = 48
 
     static func serif(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
         let base = NSFont.systemFont(ofSize: size, weight: weight)
@@ -44,15 +49,19 @@ enum Theme {
     static let mono = NSFont.monospacedSystemFont(ofSize: size - 3.5, weight: .regular)
     static let hidden = NSFont.systemFont(ofSize: 0.01)
 
-    static func paragraph(lineHeight: CGFloat, before: CGFloat = 0, after: CGFloat = 0, indent: CGFloat = 0) -> NSParagraphStyle {
+    static func paragraph(lineHeight: CGFloat, before: CGFloat = 0, after: CGFloat = 0, indent: CGFloat = 0, hanging: CGFloat = 0) -> NSParagraphStyle {
         let p = NSMutableParagraphStyle()
         p.minimumLineHeight = lineHeight
         p.maximumLineHeight = lineHeight
         p.paragraphSpacingBefore = before
         p.paragraphSpacing = after
-        p.firstLineHeadIndent = indent
-        p.headIndent = indent
+        p.firstLineHeadIndent = hang + indent - hanging
+        p.headIndent = hang + indent
         return p
+    }
+
+    static func width(_ s: String, _ font: NSFont) -> CGFloat {
+        ceil((s as NSString).size(withAttributes: [.font: font]).width)
     }
 
     static let bodyParagraph = paragraph(lineHeight: 30)
@@ -140,13 +149,20 @@ final class QuillTextView: NSTextView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        let side = max(36, (newSize.width - Theme.column - (gutter ? 280 : 0)) / 2)
-        let width = min(Theme.column, newSize.width - 72)
+        let side = max(36, (newSize.width - Theme.column - (gutter ? 280 : 0)) / 2) - Theme.hang
+        let width = min(Theme.column, newSize.width - 72) + Theme.hang
         if abs(textContainerInset.width - side) > 0.5 || textContainer?.size.width != width {
-            textContainerInset = NSSize(width: side, height: 72)
+            textContainerInset = NSSize(width: side, height: (Self.top + Self.bottom) / 2)
             textContainer?.size = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         }
         fx.frame = bounds
+    }
+
+    static let top: CGFloat = 72
+    static let bottom: CGFloat = 220
+
+    override var textContainerOrigin: NSPoint {
+        NSPoint(x: textContainerInset.width, y: Self.top)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -157,6 +173,52 @@ final class QuillTextView: NSTextView {
     override func insertText(_ string: Any, replacementRange: NSRange) {
         beforeKey?()
         super.insertText(string, replacementRange: replacementRange)
+    }
+
+    @objc func bold(_ sender: Any?) { wrap("**") }
+    @objc func italic(_ sender: Any?) { wrap("*") }
+    @objc func strike(_ sender: Any?) { wrap("~~") }
+    @objc func code(_ sender: Any?) { wrap("`") }
+
+    private func wrap(_ marker: String) {
+        let text = string as NSString
+        let sel = selectedRange()
+        let m = (marker as NSString).length
+        let outer = NSRange(location: sel.location - m, length: sel.length + 2 * m)
+        if outer.location >= 0, NSMaxRange(outer) <= text.length,
+           text.substring(with: NSRange(location: outer.location, length: m)) == marker,
+           text.substring(with: NSRange(location: NSMaxRange(sel), length: m)) == marker {
+            let inner = text.substring(with: sel)
+            guard shouldChangeText(in: outer, replacementString: inner) else { return }
+            replaceCharacters(in: outer, with: inner)
+            didChangeText()
+            setSelectedRange(NSRange(location: outer.location, length: sel.length))
+            return
+        }
+        let inner = text.substring(with: sel)
+        let wrapped = marker + inner + marker
+        guard shouldChangeText(in: sel, replacementString: wrapped) else { return }
+        replaceCharacters(in: sel, with: wrapped)
+        didChangeText()
+        setSelectedRange(NSRange(location: sel.location + m, length: sel.length))
+    }
+
+    @objc func heading(_ sender: NSMenuItem) {
+        let text = string as NSString
+        let line = text.lineRange(for: NSRange(location: selectedRange().location, length: 0))
+        let body = text.substring(with: line)
+        let hashes = body.prefix { $0 == "#" }.count
+        var marker = hashes > 0 ? hashes : 0
+        if hashes > 0, body.dropFirst(hashes).first == " " { marker += 1 }
+        let existing = NSRange(location: line.location, length: hashes > 0 ? marker : 0)
+        let level = sender.tag
+        let next = level == 0 || level == hashes ? "" : String(repeating: "#", count: level) + " "
+        guard shouldChangeText(in: existing, replacementString: next) else { return }
+        let caret = selectedRange()
+        replaceCharacters(in: existing, with: next)
+        didChangeText()
+        let delta = (next as NSString).length - existing.length
+        setSelectedRange(NSRange(location: max(line.location + (next as NSString).length, caret.location + delta), length: caret.length))
     }
 
     var text: String {
@@ -250,6 +312,7 @@ final class QuillTextView: NSTextView {
     }
 
     private func apply(_ m: Markup, full: NSRange, active: Bool, storage: NSTextStorage) {
+        let text = storage.string as NSString
         storage.setAttributes(Theme.bodyAttributes, range: full)
         if m.spans.isEmpty, (storage.string as NSString).substring(with: full).allSatisfy(\.isNewline) {
             storage.addAttribute(.paragraphStyle, value: Theme.gap, range: full)
@@ -260,9 +323,11 @@ final class QuillTextView: NSTextView {
             switch span.style {
             case .heading(let level):
                 let font = Theme.headingFont(level)
+                let marker = active ? m.markers.first.map { text.substring(with: $0) } ?? "" : ""
                 storage.addAttributes([
                     .font: font,
-                    .paragraphStyle: Theme.paragraph(lineHeight: ceil(font.pointSize * 1.3), before: level == 1 ? 0 : 10, after: 4),
+                    .paragraphStyle: Theme.paragraph(lineHeight: ceil(font.pointSize * 1.3), before: level == 1 ? 0 : 10, after: 4,
+                                                     hanging: Theme.width(marker, font)),
                 ], range: full)
             case .bold:
                 storage.addAttribute(.font, value: Theme.bold(storage.attribute(.font, at: r.location, effectiveRange: nil) as? NSFont ?? Theme.body), range: r)
@@ -275,13 +340,21 @@ final class QuillTextView: NSTextView {
             case .link:
                 storage.addAttributes([.foregroundColor: Theme.accent, .underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: Theme.accent.withAlphaComponent(0.35)], range: r)
             case .quote:
+                let font = Theme.italic(Theme.body)
+                let marker = active ? m.markers.first.map { text.substring(with: $0) } ?? "" : ""
                 storage.addAttributes([
-                    .font: Theme.italic(Theme.body), .foregroundColor: Theme.soft,
-                    .paragraphStyle: Theme.paragraph(lineHeight: 30, indent: 22),
+                    .font: font, .foregroundColor: Theme.soft, .quote: true,
+                    .paragraphStyle: Theme.paragraph(lineHeight: 30, indent: 22, hanging: Theme.width(marker, font)),
                 ], range: full)
             case .list:
                 storage.addAttributes([.foregroundColor: Theme.accent], range: r)
-                storage.addAttribute(.paragraphStyle, value: Theme.paragraph(lineHeight: 30, after: 2, indent: 0), range: full)
+                var end = NSMaxRange(r)
+                while end < NSMaxRange(full), let c = Unicode.Scalar(text.character(at: end)), c == " " || c == "\t" { end += 1 }
+                let leading = text.substring(with: NSRange(location: full.location, length: r.location - full.location))
+                let prefix = text.substring(with: NSRange(location: full.location, length: end - full.location))
+                let indent = Theme.width(leading, Theme.body)
+                storage.addAttribute(.paragraphStyle, value: Theme.paragraph(lineHeight: 30, after: 2, indent: indent,
+                                                                             hanging: Theme.width(prefix, Theme.body) - indent), range: full)
             case .strike:
                 storage.addAttributes([.strikethroughStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: Theme.soft], range: r)
             case .rule:
@@ -298,6 +371,24 @@ final class QuillTextView: NSTextView {
         for (r, attributes) in marks {
             let overlap = NSIntersectionRange(r, full)
             if overlap.length > 0 { storage.addAttributes(attributes, range: overlap) }
+        }
+    }
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let tlm = textLayoutManager, let tcs = textContentStorage, let storage = textStorage else { return }
+        let origin = textContainerOrigin
+        let x = origin.x + Theme.hang + 2
+        Theme.faint.setFill()
+        tlm.enumerateTextLayoutFragments(from: tlm.textViewportLayoutController.viewportRange?.location ?? tlm.documentRange.location, options: []) { fragment in
+            let frame = fragment.layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y)
+            if frame.minY > rect.maxY { return false }
+            guard frame.maxY >= rect.minY else { return true }
+            let at = tcs.offset(from: tcs.documentRange.location, to: fragment.rangeInElement.location)
+            if at < storage.length, storage.attribute(.quote, at: at, effectiveRange: nil) != nil {
+                NSBezierPath(roundedRect: NSRect(x: x, y: frame.minY + 4, width: 2.5, height: frame.height - 8), xRadius: 1.25, yRadius: 1.25).fill()
+            }
+            return true
         }
     }
 

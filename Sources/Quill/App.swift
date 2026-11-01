@@ -9,6 +9,17 @@ final class Chrome {
     var draft = ""
     var hinting = !UserDefaults.standard.bool(forKey: "spoke")
     var choosingMode = false
+    var selectedWords = 0
+    var history: [String] = UserDefaults.standard.stringArray(forKey: "history") ?? []
+    var recall: Int?
+
+    func remember(_ words: String) {
+        history.removeAll { $0 == words }
+        history.append(words)
+        history = Array(history.suffix(30))
+        recall = nil
+        UserDefaults.standard.set(history, forKey: "history")
+    }
 }
 
 @main
@@ -53,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         editor = EditorController(ws: ws)
         let split = NSSplitViewController()
-        let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws)))
+        let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws, settings: { [weak self] in self?.openSettings() })))
         side.minimumThickness = 210
         side.maximumThickness = 320
         side.canCollapse = true
@@ -113,10 +124,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func menu() -> NSMenu {
         let bar = NSMenu()
-        func item(_ title: String, _ action: Selector?, _ key: String = "", _ mods: NSEvent.ModifierFlags = .command, target: AnyObject? = nil) -> NSMenuItem {
+        func item(_ title: String, _ action: Selector?, _ key: String = "", _ mods: NSEvent.ModifierFlags = .command, target: AnyObject? = nil, tag: Int = 0) -> NSMenuItem {
             let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
             i.keyEquivalentModifierMask = mods
             i.target = target
+            i.tag = tag
             return i
         }
         func add(_ title: String, _ items: [NSMenuItem]) -> NSMenu {
@@ -127,24 +139,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             bar.addItem(top)
             return m
         }
+        func find(_ title: String, _ key: String, _ mods: NSEvent.ModifierFlags, _ action: NSFindPanelAction) -> NSMenuItem {
+            item(title, #selector(NSTextView.performFindPanelAction(_:)), key, mods, tag: Int(action.rawValue))
+        }
 
+        let services = NSMenu()
+        NSApp.servicesMenu = services
+        let servicesItem = item("Services", nil)
+        servicesItem.submenu = services
         _ = add("Quill", [
             item("About Quill", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
             .separator(),
             item("Settings…", #selector(openSettings), ",", target: self),
             .separator(),
+            servicesItem,
+            .separator(),
             item("Hide Quill", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
+            item("Show All", #selector(NSApplication.unhideAllApplications(_:))),
             .separator(),
             item("Quit Quill", #selector(NSApplication.terminate(_:)), "q"),
         ])
         _ = add("File", [
             item("New Note", #selector(newNote), "n", target: self),
             item("Open Folder…", #selector(openFolder), "o", target: self),
+            .separator(),
+            item("Save", #selector(save), "s", target: self),
+            item("Rename…", #selector(rename), "", target: self),
             item("Show in Finder", #selector(reveal), "r", [.command, .option], target: self),
+            .separator(),
+            item("Move to Trash", #selector(trash), target: self),
             .separator(),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w"),
         ])
+        let findMenu = NSMenu(title: "Find")
+        [
+            find("Find…", "f", .command, .showFindPanel),
+            find("Find and Replace…", "f", [.command, .option], .init(rawValue: 12)!),
+            find("Find Next", "g", .command, .next),
+            find("Find Previous", "g", [.command, .shift], .previous),
+            find("Use Selection for Find", "e", .command, .setFindString),
+            item("Jump to Selection", #selector(NSResponder.centerSelectionInVisibleArea(_:)), "j"),
+        ].forEach(findMenu.addItem)
+        let findItem = item("Find", nil)
+        findItem.submenu = findMenu
         _ = add("Edit", [
             item("Undo", Selector(("undo:")), "z"),
             item("Redo", Selector(("redo:")), "z", [.command, .shift]),
@@ -153,37 +191,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Copy", #selector(NSText.copy(_:)), "c"),
             item("Paste", #selector(NSText.paste(_:)), "v"),
             item("Paste and Match Style", #selector(NSTextView.pasteAsPlainText(_:)), "v", [.command, .option, .shift]),
+            item("Delete", #selector(NSText.delete(_:))),
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
             .separator(),
-            {
-                let i = item("Find…", #selector(NSTextView.performFindPanelAction(_:)), "f")
-                i.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
-                return i
-            }(),
-            {
-                let i = item("Find Next", #selector(NSTextView.performFindPanelAction(_:)), "g")
-                i.tag = Int(NSFindPanelAction.next.rawValue)
-                return i
-            }(),
+            findItem,
         ])
+        _ = add("Format", [
+            item("Bold", #selector(QuillTextView.bold(_:)), "b"),
+            item("Italic", #selector(QuillTextView.italic(_:)), "i"),
+            item("Strikethrough", #selector(QuillTextView.strike(_:)), "x", [.command, .shift]),
+            item("Code", #selector(QuillTextView.code(_:)), "c", [.command, .option]),
+            .separator(),
+            item("Heading 1", #selector(QuillTextView.heading(_:)), "1", tag: 1),
+            item("Heading 2", #selector(QuillTextView.heading(_:)), "2", tag: 2),
+            item("Heading 3", #selector(QuillTextView.heading(_:)), "3", tag: 3),
+            item("Body Text", #selector(QuillTextView.heading(_:)), "0", tag: 0),
+        ])
+        let agents = NSMenu(title: "Co-writer")
+        for (i, spec) in AgentSpec.all.enumerated() {
+            agents.addItem(item(spec.name, #selector(chooseAgent(_:)), target: self, tag: i))
+        }
+        agents.addItem(.separator())
+        agents.addItem(item("Settings…", #selector(openSettings), target: self))
+        let agentsItem = item("Co-writer", nil)
+        agentsItem.submenu = agents
+        let talk = item("Hold Right ⌥ to Talk", nil)
+        talk.isEnabled = false
         _ = add("Agent", [
             item("Ask…", #selector(ask), "k", target: self),
+            talk,
             item("Stop", #selector(stop), ".", target: self),
             .separator(),
             item("Guided Edits", #selector(guided), "1", [.command, .control], target: self),
             item("Margin Notes", #selector(notesMode), "2", [.command, .control], target: self),
             .separator(),
-            item("Choose Agent…", #selector(openSettings), "", target: self),
+            agentsItem,
         ])
         _ = add("View", [
-            item("Toggle Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]),
+            item("Hide Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]),
+            .separator(),
+            item("Actual Size", #selector(EditorController.actualSize(_:)), "0", [.command, .option]),
+            item("Zoom In", #selector(EditorController.zoomIn(_:)), "+"),
+            item("Zoom Out", #selector(EditorController.zoomOut(_:)), "-"),
+            .separator(),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
         ])
         let windowMenu = add("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Zoom", #selector(NSWindow.performZoom(_:))),
+            .separator(),
+            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))),
         ])
         NSApp.windowsMenu = windowMenu
+        NSApp.helpMenu = add("Help", [
+            item("Welcome to Quill", #selector(welcome), target: self),
+        ])
         return bar
     }
 
@@ -192,8 +254,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func stop() { ws.cancelTurn() }
     @objc private func guided() { ws.mode = .guided }
     @objc private func notesMode() { ws.mode = .notes }
+    @objc private func save() { ws.flushSave() }
+    @objc private func chooseAgent(_ sender: NSMenuItem) { ws.agentID = AgentSpec.all[sender.tag].id }
     @objc private func reveal() {
         NSWorkspace.shared.activateFileViewerSelecting([ws.current ?? ws.vault])
+    }
+
+    @objc private func rename() {
+        guard let note = ws.notes.first(where: { $0.url == ws.current }) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename note"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: note.title)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] r in
+            guard r == .alertFirstButtonReturn, let self, let problem = self.ws.rename(note, to: field.stringValue) else { return }
+            self.ws.phase = .failed(problem)
+        }
+    }
+
+    @objc private func trash() {
+        guard let note = ws.notes.first(where: { $0.url == ws.current }) else { return }
+        ws.trash(note)
+    }
+
+    @objc private func welcome() {
+        let url = ws.vault.appending(path: "Welcome.md")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            seed(ws.vault)
+            ws.refresh()
+        }
+        ws.open(url)
     }
 
     @objc private func openFolder() {
@@ -222,8 +316,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(guided) { item.state = ws.mode == .guided ? .on : .off }
-        if item.action == #selector(notesMode) { item.state = ws.mode == .notes ? .on : .off }
+        switch item.action {
+        case #selector(guided): item.state = ws.mode == .guided ? .on : .off
+        case #selector(notesMode): item.state = ws.mode == .notes ? .on : .off
+        case #selector(chooseAgent(_:)):
+            let spec = AgentSpec.all[item.tag]
+            item.state = ws.agentID == spec.id ? .on : .off
+        case #selector(stop):
+            if case .idle = ws.phase { return ws.listener.isListening }
+        case #selector(ask), #selector(rename), #selector(trash), #selector(save):
+            return ws.current != nil
+        default: break
+        }
         return true
     }
 }
@@ -256,6 +360,10 @@ final class EditorController: NSViewController {
         scroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(scroll)
 
+        let empty = NSHostingView(rootView: EmptyState(ws: ws))
+        empty.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(empty)
+
         let pill = NSHostingView(rootView: Pill(ws: ws, chrome: chrome))
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.sizingOptions = [.intrinsicContentSize]
@@ -266,6 +374,8 @@ final class EditorController: NSViewController {
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: root.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            empty.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -40),
             pill.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             pill.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             pill.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, constant: -32),
@@ -284,18 +394,52 @@ final class EditorController: NSViewController {
         NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: text, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.layoutNotes() }
         }
+        scroll.allowsMagnification = true
+        scroll.minMagnification = 0.7
+        scroll.maxMagnification = 2
+        let zoom = UserDefaults.standard.double(forKey: "zoom")
+        if zoom > 0 { scroll.magnification = zoom }
+        NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scroll, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.remember() }
+        }
         observe()
         listen()
+    }
+
+    @objc func zoomIn(_ sender: Any?) { zoom(scroll.magnification * 1.1) }
+    @objc func zoomOut(_ sender: Any?) { zoom(scroll.magnification / 1.1) }
+    @objc func actualSize(_ sender: Any?) { zoom(1) }
+
+    private func zoom(_ value: CGFloat) {
+        let clamped = min(scroll.maxMagnification, max(scroll.minMagnification, value))
+        let caret = text.segments(NSRange(location: text.selectedRange().location, length: 0)).first
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+            if let caret {
+                scroll.animator().setMagnification(clamped, centeredAt: CGPoint(x: caret.midX, y: caret.midY))
+            } else {
+                scroll.animator().magnification = clamped
+            }
+        }
+        UserDefaults.standard.set(clamped, forKey: "zoom")
+    }
+
+    private func remember() {
+        UserDefaults.standard.set(scroll.magnification, forKey: "zoom")
     }
 
     private func observe() {
         withObservationTracking {
             _ = ws.margin
             _ = ws.phase
+            _ = ws.current
             _ = chrome.commanding
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
+                self.title()
+                self.announce()
                 if !self.chrome.commanding, self.view.window?.firstResponder !== self.text {
                     self.view.window?.makeFirstResponder(self.text)
                 }
@@ -304,6 +448,29 @@ final class EditorController: NSViewController {
                 self.observe()
             }
         }
+    }
+
+    private func title() {
+        guard let window = view.window else { return }
+        window.title = ws.current?.deletingPathExtension().lastPathComponent ?? "Quill"
+        window.representedURL = ws.current
+        text.isEditable = ws.current != nil
+    }
+
+    private var spoken: Phase = .idle
+    private func announce() {
+        guard ws.phase != spoken else { return }
+        spoken = ws.phase
+        let line: String? = switch ws.phase {
+        case .done(let n): n == 0 ? "Nothing to change" : n == 1 ? "1 change. Command Z to undo." : "\(n) changes. Command Z to undo."
+        case .said(let s): s
+        case .failed(let s): s
+        case .thinking: "Working"
+        default: nil
+        }
+        guard let line else { return }
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                             userInfo: [.announcement: line, .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
     private func afterTurn() {
@@ -323,6 +490,11 @@ final class EditorController: NSViewController {
 
     func command() {
         guard !ws.listener.isListening else { return }
+        if !chrome.commanding {
+            let sel = text.selectedRange()
+            chrome.selectedWords = sel.length == 0 ? 0 : (text.string as NSString).substring(with: sel).split(whereSeparator: \.isWhitespace).count
+            chrome.recall = nil
+        }
         chrome.commanding.toggle()
     }
 
@@ -439,7 +611,7 @@ final class EditorController: NSViewController {
                 }
             )
             let size = card.fittingSize
-            let y = max(text.segments(note.range).first?.minY ?? 0, floor)
+            let y = max((text.segments(note.range).first?.minY ?? 0) + 7, floor)
             card.frame = CGRect(x: x, y: y, width: 220, height: size.height)
             floor = y + size.height + 14
         }
@@ -456,6 +628,7 @@ final class EditorController: NSViewController {
 
 struct Sidebar: View {
     @Bindable var ws: Workspace
+    var settings: () -> Void = {}
     @State private var renaming: Note?
     @State private var name = ""
 
@@ -466,8 +639,10 @@ struct Sidebar: View {
                     ForEach(ws.notes) { note in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(note.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                            Text(note.modified, format: .relative(presentation: .named))
-                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                            TimelineView(.everyMinute) { _ in
+                                Text(note.modified, format: .relative(presentation: .named))
+                            }
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 2)
                         .tag(note.url)
@@ -488,83 +663,171 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
-            AgentBadge(ws: ws)
+            AgentBadge(ws: ws, settings: settings)
         }
         .alert("Rename note", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $name)
-            Button("Rename") { if let r = renaming { ws.rename(r, to: name) }; renaming = nil }
+            Button("Rename") {
+                if let r = renaming, let problem = ws.rename(r, to: name) { ws.phase = .failed(problem) }
+                renaming = nil
+            }
             Button("Cancel", role: .cancel) { renaming = nil }
+        }
+    }
+}
+
+struct EmptyState: View {
+    var ws: Workspace
+    var body: some View {
+        if ws.current == nil {
+            VStack(spacing: 10) {
+                Text(ws.notes.isEmpty ? "No notes yet" : "No note open")
+                    .font(.serif(22, .semibold)).foregroundStyle(Color.ink)
+                Button { ws.create() } label: {
+                    HStack(spacing: 6) { Text("New note"); Keycap("⌘N") }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.soft)
+            }
         }
     }
 }
 
 struct AgentBadge: View {
     @Bindable var ws: Workspace
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle().fill(Color.greenInk).frame(width: 6, height: 6)
-            Text(ws.spec.name).font(.system(size: 12, weight: .medium)).lineLimit(1).fixedSize()
-            Spacer()
-            Picker("", selection: $ws.mode) {
-                Text("Guided").tag(Mode.guided)
-                Text("Notes").tag(Mode.notes)
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 112)
-            .labelsHidden()
+    var settings: () -> Void
+    @State private var hovering = false
+
+    private var state: (Color, String?) {
+        switch ws.phase {
+        case .listening: return (.accentInk, "Listening")
+        case .thinking, .applying: return (.accentInk, "Working")
+        case .failed: return (.redInk, "Needs attention")
+        default: break
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        switch ws.available(ws.spec) {
+        case true?: return (.greenInk, nil)
+        case false?: return (.redInk, ws.spec.requires == nil ? "Needs a key" : ws.spec.requires == "npx" ? "Needs Node" : "Not installed")
+        case nil: return (.faint, nil)
+        }
+    }
+
+    var body: some View {
+        let (dot, note) = state
+        Menu {
+            Picker("Co-writer", selection: $ws.agentID) {
+                ForEach(AgentSpec.all) { spec in
+                    Text(spec.name).tag(spec.id)
+                }
+            }
+            .pickerStyle(.inline)
+            Picker("Answer with", selection: $ws.mode) {
+                Text("Guided Edits").tag(Mode.guided)
+                Text("Margin Notes").tag(Mode.notes)
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Settings…", action: settings)
+        } label: {
+            HStack(spacing: 8) {
+                Circle().fill(dot).frame(width: 6, height: 6)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(ws.spec.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.ink)
+                    Text(note ?? (ws.mode == .guided ? "Guided edits" : "Margin notes"))
+                        .font(.system(size: 11)).foregroundStyle(note == nil ? Color.soft : dot)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.soft)
+                    .opacity(hovering ? 1 : 0.6)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.ink.opacity(hovering ? 0.06 : 0)))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+        .help("Co-writer and how it answers")
+        .accessibilityLabel("\(ws.spec.name), \(note ?? (ws.mode == .guided ? "guided edits" : "margin notes"))")
     }
 }
 
 struct SettingsView: View {
     @Bindable var ws: Workspace
     @State private var key = Keychain.read("anthropic") ?? ""
-    @State private var present: [String: Bool] = [:]
 
     var body: some View {
         Form {
             Section("Co-writer") {
                 ForEach(AgentSpec.all) { spec in
-                    let available = spec.requires.map { present[$0] ?? false } ?? !key.isEmpty || Keychain.anthropicKey != nil
-                    HStack(spacing: 10) {
-                        Image(systemName: ws.agentID == spec.id ? "largecircle.fill.circle" : "circle")
-                            .foregroundStyle(ws.agentID == spec.id ? Color.accentInk : Color.soft)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(spec.name).font(.system(size: 13, weight: .medium))
-                            Text(spec.detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(available ? "Ready" : spec.requires == nil ? "Needs a key" : "Not installed")
-                            .font(.system(size: 11)).foregroundStyle(available ? Color.greenInk : Color.soft)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { ws.agentID = spec.id }
+                    row(spec)
                 }
             }
-            Section("Anthropic API key") {
-                SecureField("sk-ant-…", text: $key)
-                    .onSubmit { Keychain.write("anthropic", key) }
-                    .onChange(of: key) { Keychain.write("anthropic", key) }
-                Text("Stored in your Keychain. Only used when Anthropic API is the co-writer.")
+            Section {
+                SecureField("API key", text: $key, prompt: Text("sk-ant-…"))
+                    .onChange(of: key) {
+                        Keychain.write("anthropic", key)
+                        ws.hasKey = Keychain.anthropicKey?.isEmpty == false
+                    }
+            } header: {
+                Text("Anthropic API")
+            } footer: {
+                Text("Stored in your Keychain. Used only when Anthropic API is the co-writer.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Section("Answers") {
-                Picker("Default", selection: $ws.mode) {
-                    Text("Guided edits").tag(Mode.guided)
-                    Text("Margin notes").tag(Mode.notes)
+                Picker("Answer with", selection: $ws.mode) {
+                    Text("Guided Edits").tag(Mode.guided)
+                    Text("Margin Notes").tag(Mode.notes)
                 }
+                .pickerStyle(.radioGroup)
+                Text(ws.mode == .guided
+                     ? "Quill edits the text while you watch. One ⌘Z takes a turn back."
+                     : "Quill leaves notes in the margin. Click a note to apply it.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+        .tint(Color.accentInk)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
-        .task {
-            for spec in AgentSpec.all {
-                if let r = spec.requires { present[r] = await installed(r) }
+        .onAppear { ws.checkAgents() }
+    }
+
+    private func row(_ spec: AgentSpec) -> some View {
+        let available = ws.available(spec)
+        let chosen = ws.agentID == spec.id
+        return HStack(spacing: 10) {
+            Image(systemName: chosen ? "largecircle.fill.circle" : "circle")
+                .foregroundStyle(chosen ? Color.accentInk : Color.soft)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(spec.name).font(.system(size: 13, weight: .medium))
+                Text(spec.detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            switch available {
+            case true?:
+                Text("Ready").font(.system(size: 11)).foregroundStyle(Color.greenInk)
+            case false?:
+                Text(spec.requires == nil ? "Needs a key" : spec.requires == "npx" ? "Needs Node" : "Not installed")
+                    .font(.system(size: 11)).foregroundStyle(Color.soft)
+            case nil:
+                ProgressView().controlSize(.mini)
             }
         }
+        .opacity(available == false && !chosen ? 0.55 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture { ws.agentID = spec.id }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
     }
 }

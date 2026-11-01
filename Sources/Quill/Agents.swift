@@ -31,7 +31,7 @@ struct AgentSpec: Identifiable, Hashable {
 
     static let all: [AgentSpec] = [
         AgentSpec(id: "claude", name: "Claude Code", detail: "Your Claude subscription, through Claude Code",
-                  kind: .acp("npx -y @agentclientprotocol/claude-agent-acp@0.99.1"), requires: "claude"),
+                  kind: .acp("npx -y @agentclientprotocol/claude-agent-acp@0.99.1"), requires: "npx"),
         AgentSpec(id: "codex", name: "Codex", detail: "Your ChatGPT subscription, through the Codex CLI",
                   kind: .codex, requires: "codex"),
         AgentSpec(id: "anthropic", name: "Anthropic API", detail: "Claude Opus 5.5 with your API key",

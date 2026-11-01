@@ -183,25 +183,53 @@ struct Pill: View {
     private var command: some View {
         HStack(spacing: 10) {
             Image(systemName: "sparkle").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.accentInk)
-            TextField("Ask Quill to change or check something…", text: $chrome.draft)
+            if chrome.selectedWords > 0 {
+                Text(chrome.selectedWords == 1 ? "1 word" : "\(chrome.selectedWords) words")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.accentInk)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Capsule().fill(Color.accentInk.opacity(0.12)))
+                    .help("Your request is about the selected text")
+            }
+            TextField(chrome.selectedWords > 0 ? "Ask about the selection…" : "Ask Quill to change or check something…", text: $chrome.draft)
                 .textFieldStyle(.plain)
                 .font(.serif(16))
                 .foregroundStyle(Color.ink)
                 .focused($focused)
-                .frame(width: 440)
+                .frame(width: chrome.selectedWords > 0 ? 380 : 440)
                 .onSubmit {
-                    let words = chrome.draft
+                    let words = chrome.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !words.isEmpty else { return }
                     chrome.draft = ""
                     chrome.commanding = false
+                    chrome.remember(words)
                     ws.ask(words)
                 }
+                .onKeyPress(.upArrow) { step(-1) }
+                .onKeyPress(.downArrow) { step(1) }
                 .onExitCommand { chrome.commanding = false }
-            Keycap("↩")
+            Keycap("↩").opacity(chrome.draft.isEmpty ? 0.4 : 1)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .glassEffect(.regular, in: .capsule)
         .onAppear { focused = true }
+    }
+
+    private func step(_ delta: Int) -> KeyPress.Result {
+        let history = chrome.history
+        guard !history.isEmpty else { return .ignored }
+        let next = (chrome.recall ?? history.count) + delta
+        guard next >= 0 else { return .handled }
+        if next >= history.count {
+            chrome.recall = nil
+            chrome.draft = ""
+        } else {
+            chrome.recall = next
+            chrome.draft = history[next]
+        }
+        return .handled
     }
 
     private func dismiss(after seconds: Double) async {
@@ -353,7 +381,7 @@ struct NoteCard: View {
             }
             .font(.system(size: 11.5, weight: .medium))
             .buttonStyle(.plain)
-            .opacity(hovering || active ? 1 : 0)
+            .opacity(hovering || active ? 1 : 0.5)
         }
         .padding(.leading, 12)
         .overlay(alignment: .leading) {

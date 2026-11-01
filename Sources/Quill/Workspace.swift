@@ -29,6 +29,8 @@ final class Workspace {
     var phase: Phase = .idle
     var level: Float = 0
     var margin: [MarginNote] = []
+    var installed: [String: Bool] = [:]
+    var hasKey = Keychain.anthropicKey?.isEmpty == false
     var mode: Mode {
         didSet { UserDefaults.standard.set(mode.rawValue, forKey: "mode") }
     }
@@ -49,6 +51,7 @@ final class Workspace {
     @ObservationIgnored private var stream: FSEventStreamRef?
     @ObservationIgnored private var agent: Agent
     @ObservationIgnored private var reply = ""
+    @ObservationIgnored private var places: [URL: (NSRange, CGFloat)] = [:]
     @ObservationIgnored let listener = Listener()
     @ObservationIgnored var turnStarted: CFAbsoluteTime = 0
     @ObservationIgnored var firstChangeAt: CFAbsoluteTime?
@@ -66,6 +69,19 @@ final class Workspace {
     }
 
     var spec: AgentSpec { AgentSpec.named(agentID) }
+
+    func available(_ spec: AgentSpec) -> Bool? {
+        guard let binary = spec.requires else { return hasKey }
+        return installed[binary]
+    }
+
+    func checkAgents() {
+        Task {
+            for binary in Set(AgentSpec.all.compactMap(\.requires)) {
+                installed[binary] = await Quill.installed(binary)
+            }
+        }
+    }
 
     private func swapAgent() {
         endTurn()
@@ -85,12 +101,15 @@ final class Workspace {
         refresh()
         watch()
         warm()
-        if current == nil, let first = notes.first { open(first.url) }
+        checkAgents()
+        let last = UserDefaults.standard.string(forKey: "last").map { URL(fileURLWithPath: $0) }
+        if current == nil, let url = notes.first(where: { $0.url.path == last?.path })?.url ?? notes.first?.url { open(url) }
     }
 
     func switchVault(_ url: URL) {
         endTurn()
         flushSave()
+        leave()
         if let stream { FSEventStreamStop(stream); FSEventStreamInvalidate(stream); FSEventStreamRelease(stream) }
         stream = nil
         vault = url
@@ -117,14 +136,32 @@ final class Workspace {
         endTurn()
         choreographer?.land()
         flushSave()
+        leave()
         margin = []
         let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         current = url
+        UserDefaults.standard.set(url.path, forKey: "last")
         base = text
         editor?.text = text
-        editor?.setSelectedRange(NSRange(location: 0, length: 0))
-        editor?.scroll(.zero)
+        let (selection, y) = places[url] ?? (NSRange(location: 0, length: 0), 0)
+        editor?.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
+        editor?.layoutSubtreeIfNeeded()
+        editor?.scroll(NSPoint(x: 0, y: y))
         if case .failed = phase { phase = .idle }
+    }
+
+    private func leave() {
+        guard let url = current, let editor else { return }
+        places[url] = (editor.selectedRange(), editor.enclosingScrollView?.contentView.bounds.origin.y ?? 0)
+        let name = url.deletingPathExtension().lastPathComponent
+        guard name.wholeMatch(of: /Untitled( \d+)?/) != nil,
+              let first = editor.string.split(separator: "\n", maxSplits: 1).first,
+              first.hasPrefix("# ")
+        else { return }
+        let heading = first.dropFirst(2).trimmingCharacters(in: .whitespaces)
+        guard !heading.isEmpty else { return }
+        rename(Note(url: url, modified: .now), to: String(heading.prefix(80)))
+        if let renamed = current, renamed != url { places[renamed] = places.removeValue(forKey: url) }
     }
 
     func create() {
@@ -142,17 +179,24 @@ final class Workspace {
         editor?.window?.makeFirstResponder(editor)
     }
 
-    func rename(_ note: Note, to title: String) {
+    @discardableResult
+    func rename(_ note: Note, to title: String) -> String? {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
-        guard !clean.isEmpty, clean != note.title else { return }
+        guard !clean.isEmpty, clean != note.title else { return nil }
         let target = note.url.deletingLastPathComponent().appending(path: "\(clean).md")
-        guard !FileManager.default.fileExists(atPath: target.path) else { return }
+        guard !FileManager.default.fileExists(atPath: target.path) else { return "There's already a note named “\(clean)”." }
         flushSave()
         do {
             try FileManager.default.moveItem(at: note.url, to: target)
-            if current == note.url { current = target }
+            if current == note.url {
+                current = target
+                UserDefaults.standard.set(target.path, forKey: "last")
+            }
             refresh()
-        } catch {}
+            return nil
+        } catch {
+            return "Couldn't rename “\(note.title)”."
+        }
     }
 
     func trash(_ note: Note) {
@@ -340,6 +384,7 @@ final class Workspace {
         endTurn()
         choreographer?.land()
         flushSave()
+        leave()
         agent.shutdown()
     }
 
