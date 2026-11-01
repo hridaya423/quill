@@ -1,11 +1,23 @@
 # Progress
 
 ## Done
-- Design validated with the user: `docs/plans/2026-10-31-quill-design.md`.
+- Core: word diff, three-way merge, Markdown styling, prompts, and margin-note parsing in `QuillCore`, with 20 tests.
+- Editor: TextKit 2 view, hidden Markdown markers that show on the active line, a fixed 640 pt column, and light and dark themes.
+- Guided edits: strike, dust, type-in, and glow. Each turn is one undo group.
+- Notes mode: margin cards anchored to quotes. Click a card to apply it as a guided edit.
+- Agents: Claude Code and Gemini and OpenCode through ACP, Codex through `codex app-server`, and the Anthropic API.
+- Voice: hold right ⌥ to talk. Transcription is on device.
+- App icon, `scripts/bundle.sh`, and `scripts/e2e.sh`.
 
-## Next
-- Implementation plan (`writing-plans`), then build.
-- At build time, load the design skills the user listed: design-engineering, design-slop, design-systems, design-research, design-taste-frontend, design-systems-catalog, emil-design-eng, ui-ux-pro-max, ui-micro-effects, fluid-functionalism, stageshow, product-design. Before merge: code-deslop, ponytail.
+## Remaining
+- Hover to revert a single change.
+- The first change from Claude takes 4.4 s at p50. The target is 3 s.
+- Verify a successful Anthropic API turn. Every key in envsync returns 401.
+- Verify the live microphone path. It needs the permission dialog.
+- Verify Gemini and OpenCode. Neither CLI is installed.
 
 ## Evidence
-- None yet. No code exists.
+- `swift test`: 20 core tests and the keystroke benchmark pass.
+- `build/e2e-*`: frame captures from real-UI runs for Claude, Codex, Notes mode, and typing during a turn.
+- `~/Library/Logs/Quill/turns.tsv`: latency for each turn.
+- `decisions.tsv`: each decision with its reason and evidence.

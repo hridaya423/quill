@@ -28,6 +28,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-if [ -f build/Quill.icns ]; then cp build/Quill.icns "$app/Contents/Resources/Quill.icns"; fi
+if [ ! -f build/Quill.icns ]; then
+  swift scripts/icon.swift build/Quill.iconset 2>/dev/null
+  iconutil -c icns build/Quill.iconset -o build/Quill.icns
+fi
+cp build/Quill.icns "$app/Contents/Resources/Quill.icns"
 codesign --force --sign - "$app" >/dev/null
 echo "$app"

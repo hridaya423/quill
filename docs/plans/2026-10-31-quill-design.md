@@ -85,3 +85,23 @@ Visual work is checked from rendered screenshots and screen recordings, frame by
 
 - Confirm the Claude ACP adapter's current package name against the official ACP registry (`claude-agent-acp` vs `claude-code-acp`).
 - Typeface and theme come out of the design pass at build time.
+
+## As built (2026-11-01)
+
+The build changed four decisions in this design.
+
+- **Dissolve.** Core Animation draws the dust, not Metal. Each tile samples a snapshot of the old text. A Metal layer was not needed to hold the frame rate.
+- **Edits reach the app as full text.** ACP agents edit the file on disk after `session/request_permission`. They do not call `fs/write_text_file`. A file watcher reads the new text, and a three-way merge with the editor keeps the writer's typing. The Anthropic agent streams an `edit_document` tool with the full new text.
+- **Codex.** Codex runs through `codex app-server`, not `codex-acp`. The `codex-acp` 0.16 core rejected the installed config and current models.
+- **Direct API.** The Anthropic agent uses `claude-opus-5-5` at low effort. OpenAI direct is not built. Codex covers OpenAI through the ChatGPT login.
+
+The build skipped one feature. Hover to revert a single change is not built. ⌘Z reverts the whole turn.
+
+Measured results:
+
+| Check | Result |
+|---|---|
+| Typing latency | Warm p50 1.81 ms, max 2.26 ms, cold first key 7.97 to 8.13 ms over two runs, on a 92 KB document (`Tests/QuillTests/TypingBenchmark.swift`) |
+| First change | Claude via ACP p50 4.4 s across 8 turns. This misses the 3 s target. Codex 1.85 s. |
+| Voice | A `say` recording transcribes exactly in 0.16 to 0.26 s |
+| Undo | One ⌘Z restores the fixture byte for byte (`scripts/e2e.sh`) |
