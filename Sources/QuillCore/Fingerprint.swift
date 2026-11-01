@@ -161,7 +161,7 @@ public func describe(_ f: Fingerprint) -> [String] {
                  ? String(format: "Contractions come easily, about %.0f per 1,000 words.", f.contractions)
                  : "Contractions are rare.")
     if f.lowercaseStarts >= 0.15 {
-        lines.append("\(share(f.lowercaseStarts)) sentences start lowercase. That's a choice, so keep it.")
+        lines.append("\(share(f.lowercaseStarts)) sentences start lowercase. That’s a choice, so keep it.")
     }
     let marks = Fingerprint.marks.map { ($0.0, f.punctuation[$0.0] ?? 0) }
     let used = marks.filter { $0.1 >= 1 }.sorted { $0.1 > $1.1 }

@@ -129,7 +129,7 @@ struct Snapshots {
     }
 
     @Test(.enabled(if: dir != nil)) func onboarding() async throws {
-        for dark in [true] {
+        for dark in [false] {
             let ws = Workspace(vault: try Self.vault())
             let run = Firstrunner(current: ws.vault)
             run.places = [
@@ -142,7 +142,11 @@ struct Snapshots {
             w.contentView = host
             host.frame = NSRect(x: 0, y: 0, width: 1240, height: 820)
             run.count()
-            try? await Task.sleep(for: .milliseconds(2600))
+            try? await Task.sleep(for: .milliseconds(1700))
+            Self.render(host, "onboard-0a-strike", dark: dark)
+            try? await Task.sleep(for: .milliseconds(800))
+            Self.render(host, "onboard-0b-insert", dark: dark)
+            try? await Task.sleep(for: .milliseconds(2200))
             Self.render(host, "onboard-0-overture", dark: dark)
             run.step = .folder
             try? await Task.sleep(for: .milliseconds(900))
