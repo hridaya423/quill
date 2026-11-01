@@ -8,5 +8,6 @@ let package = Package(
         .target(name: "QuillCore"),
         .executableTarget(name: "Quill", dependencies: ["QuillCore"]),
         .testTarget(name: "QuillCoreTests", dependencies: ["QuillCore"]),
+        .testTarget(name: "QuillTests", dependencies: ["Quill"]),
     ]
 )
