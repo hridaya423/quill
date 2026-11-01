@@ -29,6 +29,12 @@ Research notes with sources: HIG, WWDC25, iA, Butterick, Rauno, Emil Kowalski, Z
 - Onboarding: ink-field overture, then folder, voice scan, co-writer, each with a live page preview. Ends on "Your first edit.md" holding one of your own hedgy sentences with a ⌘↩ coach card.
 - `scripts/blind.py <run>` builds the blind A/B page. `scripts/learning.py` prints per-day kept, undone, rewritten, and held rates.
 
+### Brand (2026-11-01)
+- Direction: Jean Clouet's portrait of Guillaume Budé writing with a quill (about 1536, The Met, CC0). EB Garamond (OFL), bundled in `Sources/Quill/Brand`. Palette from the painting: vellum, ink, rubric red.
+- Wordmark: "Quill" set from Garamond glyph outlines, the i dotted with a red fountain-pen nib (`Wordmark`, `Nib`). App icon: the nib alone on vellum (`scripts/icon.swift`).
+- Onboarding: painting left, vellum page right; small-caps running heads and folios; the edit on "Write like everyone else" in rubric.
+- Rejected on the way: purple mesh gradient, "Quill." with a coloured stop, pen-nib Q, Clouet-blue panel, boxed versal Q.
+
 ## Remaining
 - Verify the Liquid Glass pill in a real window. Offscreen renders show layout but not glass.
 - Hover to revert a single change, and a settled marker on AI-written text until accepted (iA Authorship, Zed per-hunk review).
@@ -39,6 +45,7 @@ Research notes with sources: HIG, WWDC25, iA, Butterick, Rauno, Emil Kowalski, Z
 - Verify the live microphone path. It needs the permission dialog.
 - Verify Gemini and OpenCode. Neither CLI is installed.
 - Sidebar search or quick open.
+- Carry the brand into the main window: Garamond in the editor and chrome, accent from rubric instead of blue.
 - Blind A/B: needs your picks on `blind.html` (live4 run).
 - Undo and rewrite rate over a week: needs a week of real use. Run `scripts/learning.py`.
 - Fresh macOS account, first kept edit under 60 s with no help: needs a new account and a human. Not run.

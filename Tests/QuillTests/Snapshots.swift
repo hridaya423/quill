@@ -129,6 +129,7 @@ struct Snapshots {
     }
 
     @Test(.enabled(if: dir != nil)) func onboarding() async throws {
+        Brand.register()
         for dark in [false] {
             let ws = Workspace(vault: try Self.vault())
             let run = Firstrunner(current: ws.vault)

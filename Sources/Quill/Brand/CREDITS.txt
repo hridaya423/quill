@@ -1,0 +1,2 @@
+bude.jpg: detail of Jean Clouet, Guillaume Budé (about 1536). The Metropolitan Museum of Art, object 435914, Open Access (CC0).
+EBGaramond*.ttf: EB Garamond by Georg Duffner and Octavio Pardo, SIL Open Font License 1.1 (EBGaramond-OFL.txt).

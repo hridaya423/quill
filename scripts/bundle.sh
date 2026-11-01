@@ -7,6 +7,7 @@ app="build/Quill.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp ".build/$config/Quill" "$app/Contents/MacOS/Quill"
+cp .build/"$config"/Quill_Quill.bundle/Contents/Resources/Brand/* "$app/Contents/Resources/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,8 +30,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-if [ ! -f build/Quill.icns ]; then
-  swift scripts/icon.swift build/Quill.iconset 2>/dev/null
+if [ ! -f build/Quill.icns ] || [ scripts/icon.swift -nt build/Quill.icns ]; then
+  rm -rf build/Quill.iconset
+  swift scripts/icon.swift build/Quill.iconset Sources/Quill/Brand/EBGaramond.ttf
   iconutil -c icns build/Quill.iconset -o build/Quill.icns
 fi
 cp build/Quill.icns "$app/Contents/Resources/Quill.icns"

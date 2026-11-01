@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var editor: EditorController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Brand.register()
         let env = ProcessInfo.processInfo.environment
         let saved = UserDefaults.standard.string(forKey: "vault")
         let vault = URL(fileURLWithPath: env["QUILL_VAULT"] ?? saved ?? NSHomeDirectory() + "/Quill")

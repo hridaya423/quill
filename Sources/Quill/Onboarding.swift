@@ -89,18 +89,122 @@ final class Firstrunner {
     }
 }
 
-enum Proof {
-    static let paper = Color(red: 0.949, green: 0.933, blue: 0.898)
-    static let sheet = Color(red: 0.988, green: 0.982, blue: 0.965)
-    static let ink = Color(red: 0.11, green: 0.106, blue: 0.098)
-    static let pencil = Color(red: 0.2, green: 0.33, blue: 0.86)
+enum Brand {
+    static let vellum = Color(red: 0.933, green: 0.898, blue: 0.827)
+    static let sheet = Color(red: 0.965, green: 0.941, blue: 0.894)
+    static let ink = Color(red: 0.102, green: 0.086, blue: 0.067)
+    static let body = Color(red: 0.29, green: 0.259, blue: 0.216)
+    static let muted = Color(red: 0.435, green: 0.396, blue: 0.337)
+    static let rubric = Color(red: 0.639, green: 0.231, blue: 0.169)
     static let ease = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.6)
+    static let family = "EB Garamond"
 
-    static func slug(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .tracking(1.4)
-            .foregroundStyle(ink.opacity(0.5))
+    static func url(_ name: String) -> URL? {
+        Bundle.main.url(forResource: name, withExtension: nil) ?? Bundle.module.url(forResource: "Brand/\(name)", withExtension: nil)
+    }
+
+    static func register() {
+        for name in ["EBGaramond.ttf", "EBGaramond-Italic.ttf"] {
+            if let url = url(name) { CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) }
+        }
+    }
+
+    static func serif(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        .custom(family, size: size).weight(weight)
+    }
+
+    @MainActor static func nsSerif(_ size: CGFloat) -> NSFont {
+        NSFont(descriptor: NSFontDescriptor(fontAttributes: [.family: family]), size: size) ?? Theme.serif(size)
+    }
+
+    static func caps(_ text: String, _ size: CGFloat = 13) -> some View {
+        Text(text.lowercased())
+            .font(serif(size, .medium).lowercaseSmallCaps())
+            .tracking(size * 0.14)
+            .foregroundStyle(muted)
+    }
+
+    static var art: NSImage? { url("bude.jpg").flatMap(NSImage.init(contentsOf:)) }
+}
+
+enum Nib {
+    static let outline: [(CGFloat, CGFloat)] = [(10, 31), (3, 12), (3, 5.5), (7, 1.2), (13, 1.2), (17, 5.5), (17, 12)]
+
+    static func path(tip: CGPoint, top: CGFloat, width: CGFloat) -> CGPath {
+        let height = tip.y - top
+        func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: tip.x + (x - 10) / 20 * width, y: top + (y - 1.2) / 29.8 * height)
+        }
+        let p = CGMutablePath()
+        p.move(to: pt(10, 31))
+        p.addCurve(to: pt(3, 12), control1: pt(8.6, 24), control2: pt(3.2, 18.5))
+        p.addLine(to: pt(3, 5.5))
+        p.addCurve(to: pt(7, 1.2), control1: pt(3, 3), control2: pt(4.6, 1.2))
+        p.addLine(to: pt(13, 1.2))
+        p.addCurve(to: pt(17, 5.5), control1: pt(15.4, 1.2), control2: pt(17, 3))
+        p.addLine(to: pt(17, 12))
+        p.addCurve(to: pt(10, 31), control1: pt(16.8, 18.5), control2: pt(11.4, 24))
+        p.closeSubpath()
+        let hole = pt(10, 13.4)
+        let r = width * 0.1
+        p.addEllipse(in: CGRect(x: hole.x - r, y: hole.y - r, width: r * 2, height: r * 2))
+        let slit = width * 0.065
+        p.addRect(CGRect(x: hole.x - slit / 2, y: hole.y + r, width: slit, height: tip.y - hole.y - r + 1))
+        return p
+    }
+}
+
+struct Wordmark: View {
+    var size: CGFloat = 30
+    var ink: Color = Brand.ink
+
+    struct Layout {
+        var letters: Path
+        var nib: Path
+        var bounds: CGRect
+        var baseline: CGFloat
+    }
+
+    static func layout(_ size: CGFloat) -> Layout {
+        let base = CTFontDescriptorCreateWithAttributes([kCTFontFamilyNameAttribute: Brand.family, kCTFontVariationAttribute: [0x7767_6874: 520]] as CFDictionary)
+        let font = CTFontCreateWithFontDescriptor(base, size, nil)
+        let text = NSAttributedString(string: "Qu\u{131}ll", attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font])
+        let line = CTLineCreateWithAttributedString(text)
+        let letters = CGMutablePath()
+        var boxes: [CGRect] = []
+        for run in CTLineGetGlyphRuns(line) as! [CTRun] {
+            let n = CTRunGetGlyphCount(run)
+            var glyphs = [CGGlyph](repeating: 0, count: n)
+            var points = [CGPoint](repeating: .zero, count: n)
+            CTRunGetGlyphs(run, CFRange(location: 0, length: n), &glyphs)
+            CTRunGetPositions(run, CFRange(location: 0, length: n), &points)
+            for i in 0..<n {
+                var t = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: points[i].x, ty: 0)
+                guard let g = CTFontCreatePathForGlyph(font, glyphs[i], &t) else { continue }
+                letters.addPath(g)
+                boxes.append(g.boundingBoxOfPath)
+            }
+        }
+        let stem = boxes[2], ell = boxes[3]
+        let width = stem.width * 1.75
+        let tip = CGPoint(x: stem.minX + stem.width * 0.5, y: stem.minY - size * 0.045)
+        let nib = Nib.path(tip: tip, top: ell.minY - size * 0.1, width: width)
+        let bounds = letters.boundingBoxOfPath.union(nib.boundingBoxOfPath)
+        let shift = CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
+        return Layout(letters: Path(letters).applying(shift), nib: Path(nib).applying(shift),
+                      bounds: bounds.offsetBy(dx: -bounds.minX, dy: -bounds.minY), baseline: -bounds.minY)
+    }
+
+    var body: some View {
+        let l = Self.layout(size)
+        Canvas { ctx, _ in
+            ctx.fill(l.letters, with: .color(ink))
+            ctx.fill(l.nib, with: .color(Brand.rubric), style: FillStyle(eoFill: true))
+        }
+        .frame(width: l.bounds.width, height: l.bounds.height)
+        .alignmentGuide(.firstTextBaseline) { _ in l.baseline }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Quill")
     }
 }
 
@@ -108,16 +212,15 @@ struct Grain: View {
     var body: some View {
         Canvas { ctx, size in
             var rng = SplitMix(seed: 7)
-            let count = Int(size.width * size.height / 90)
+            let count = Int(size.width * size.height / 70)
             for _ in 0..<count {
                 let x = Double(rng.next() % 10_000) / 10_000 * size.width
                 let y = Double(rng.next() % 10_000) / 10_000 * size.height
-                let dark = rng.next() % 2 == 0
-                ctx.fill(Path(CGRect(x: x, y: y, width: 1, height: 1)), with: .color(dark ? Proof.ink.opacity(0.05) : .white.opacity(0.35)))
+                let dark = rng.next() % 3 != 0
+                ctx.fill(Path(CGRect(x: x, y: y, width: 1, height: 1)), with: .color(dark ? Brand.ink.opacity(0.045) : .white.opacity(0.3)))
             }
         }
         .allowsHitTesting(false)
-        .ignoresSafeArea()
     }
 }
 
@@ -144,20 +247,20 @@ struct CropMarks: View {
                 p.move(to: CGPoint(x: x, y: y + sy * gap))
                 p.addLine(to: CGPoint(x: x, y: y + sy * (gap + len)))
             }
-            ctx.stroke(p, with: .color(Proof.ink.opacity(0.35)), lineWidth: 0.75)
+            ctx.stroke(p, with: .color(Brand.ink.opacity(0.3)), lineWidth: 0.75)
         }
         .padding(-30)
         .allowsHitTesting(false)
     }
 }
 
-struct PencilStrike: Shape {
+struct PenStrike: Shape {
     func path(in r: CGRect) -> Path {
         var p = Path()
-        p.move(to: CGPoint(x: r.minX - 4, y: r.midY + 3))
-        p.addCurve(to: CGPoint(x: r.maxX + 6, y: r.midY - 2),
-                   control1: CGPoint(x: r.minX + r.width * 0.35, y: r.midY - 1),
-                   control2: CGPoint(x: r.minX + r.width * 0.7, y: r.midY + 2))
+        p.move(to: CGPoint(x: r.minX - 6, y: r.midY + 3))
+        p.addCurve(to: CGPoint(x: r.maxX + 6, y: r.midY - 3),
+                   control1: CGPoint(x: r.minX + r.width * 0.3, y: r.midY),
+                   control2: CGPoint(x: r.minX + r.width * 0.65, y: r.midY + 1))
         return p
     }
 }
@@ -178,92 +281,131 @@ struct Overture: View {
     @Environment(\.accessibilityReduceMotion) private var still
 
     private let size: CGFloat = 76
-    private let lead = "Write like "
     private let cut = "everyone else"
     private let kept = "yourself"
 
     var body: some View {
-        let font = Theme.serif(size)
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                art.frame(width: geo.size.width * 0.43)
+                panel
+            }
+        }
+        .task { await play() }
+    }
+
+    private var art: some View {
+        Color.black
+            .overlay {
+                if let image = Brand.art {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                }
+            }
+            .clipped()
+            .overlay { LinearGradient(colors: [.clear, .black.opacity(0.5)], startPoint: .center, endPoint: .bottom) }
+            .overlay(alignment: .bottomLeading) { caption }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Detail of Jean Clouet’s portrait of Guillaume Budé, writing in a book with a quill.")
+    }
+
+    private var caption: some View {
+            (Text("Jean Clouet, ") + Text("Guillaume Budé").italic() + Text(", about 1536. The Metropolitan Museum of Art."))
+                .font(Brand.serif(13))
+                .foregroundStyle(Brand.sheet.opacity(0.8))
+                .padding(24)
+    }
+
+    private var panel: some View {
+        let font = Brand.nsSerif(size)
         let cutWidth = Theme.width(cut, font)
         let keptWidth = Theme.width(kept, font)
-        VStack(alignment: .leading, spacing: 0) {
-            Proof.slug("Galley 1 · First proof")
-                .padding(.bottom, 28)
-                .opacity(phase >= 1 ? 1 : 0)
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text(lead)
-                ZStack(alignment: .bottomLeading) {
-                    Text(cut)
-                        .foregroundStyle(Proof.ink.opacity(phase >= 2 ? 0.55 : 1))
-                        .fixedSize()
-                        .overlay {
-                            PencilStrike()
-                                .trim(from: 0, to: phase >= 2 ? 1 : 0)
-                                .stroke(Proof.pencil, style: StrokeStyle(lineWidth: 3.2, lineCap: .round))
-                                .offset(y: -size * 0.04)
-                        }
-                        .opacity(phase >= 4 ? 0 : 1)
-                    Caret()
-                        .trim(from: 0, to: phase >= 3 ? 1 : 0)
-                        .stroke(Proof.pencil, style: StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
-                        .frame(width: size * 0.26, height: size * 0.3)
-                        .offset(x: -size * 0.16, y: size * 0.12)
-                        .opacity(phase == 3 ? 1 : 0)
-                    Text(kept)
-                        .italic(phase < 4)
-                        .foregroundStyle(phase >= 4 ? Proof.ink : Proof.pencil)
-                        .fixedSize()
-                        .scaleEffect(phase >= 4 ? 1 : 0.5, anchor: .bottomLeading)
-                        .offset(y: phase >= 4 ? 0 : -size * 0.92)
-                        .opacity(phase >= 3 ? 1 : 0)
-                        .mask(alignment: .bottomLeading) {
-                            Rectangle().frame(width: phase >= 3 ? keptWidth * 1.2 : 0, height: size * 3)
-                        }
-                }
-                .frame(width: phase >= 4 ? keptWidth : cutWidth, alignment: .leading)
-                Text(".")
-                Spacer(minLength: 40)
-                HStack(spacing: 10) {
-                    Text(kept).font(.serif(26).italic())
-                    Text("/").font(.serif(30))
-                }
-                .foregroundStyle(Proof.pencil)
-                .opacity(phase >= 4 ? 0.4 : phase >= 3 ? 1 : 0)
-                .offset(y: -size * 0.12)
-                .accessibilityHidden(true)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Wordmark(size: 36)
+                Spacer()
+                Brand.caps("First proof")
             }
-            .font(.serif(size))
-            .foregroundStyle(Proof.ink)
+            .padding(.top, 46)
+            Spacer()
+            VStack(alignment: .leading, spacing: -size * 0.2) {
+                Text("Write like")
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    ZStack(alignment: .bottomLeading) {
+                        Text(cut)
+                            .foregroundStyle(phase >= 2 ? Brand.muted : Brand.ink)
+                            .fixedSize()
+                            .overlay {
+                                PenStrike()
+                                    .trim(from: 0, to: phase >= 2 ? 1 : 0)
+                                    .stroke(Brand.rubric, style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
+                                    .offset(y: -size * 0.02)
+                            }
+                            .opacity(phase >= 4 ? 0 : 1)
+                        Caret()
+                            .trim(from: 0, to: phase >= 3 ? 1 : 0)
+                            .stroke(Brand.rubric, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                            .frame(width: size * 0.24, height: size * 0.26)
+                            .offset(x: -size * 0.15, y: size * 0.04)
+                            .opacity(phase == 3 ? 1 : 0)
+                        Text(kept)
+                            .font(.custom(Brand.family, size: size).italic())
+                            .foregroundStyle(Brand.rubric)
+                            .fixedSize()
+                            .scaleEffect(0.5, anchor: .bottomLeading)
+                            .offset(y: -size * 0.84)
+                            .opacity(phase == 3 ? 1 : 0)
+                            .mask(alignment: .bottomLeading) {
+                                Rectangle().frame(width: phase >= 3 ? keptWidth : 0, height: size * 3)
+                            }
+                        Text(kept)
+                            .fixedSize()
+                            .opacity(phase >= 4 ? 1 : 0)
+                            .offset(y: phase >= 4 ? 0 : -size * 0.3)
+                    }
+                    .frame(width: phase >= 4 ? keptWidth : cutWidth, alignment: .leading)
+                    Text(".")
+                }
+            }
+            .font(Brand.serif(size))
+            .foregroundStyle(Brand.ink)
+            .lineSpacing(0)
             .opacity(phase >= 1 ? 1 : 0)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Write like yourself.")
-            Text("A co-writer that edits in front of you, keeps what’s yours, and learns your voice from your own notes.")
-                .font(.serif(21))
-                .foregroundStyle(Proof.ink.opacity(0.62))
-                .lineSpacing(5)
-                .frame(width: 560, alignment: .leading)
+            Text("Quill edits your writing while you watch. It learns your voice from your notes and from the edits you keep.")
+                .font(Brand.serif(23))
+                .foregroundStyle(Brand.body)
+                .lineSpacing(6)
+                .frame(maxWidth: 500, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 26)
+                .padding(.top, 32)
                 .opacity(phase >= 5 ? 1 : 0)
                 .offset(y: phase >= 5 ? 0 : 8)
             Primary(label: "Begin", action: begin)
                 .padding(.top, 40)
                 .opacity(phase >= 5 ? 1 : 0)
                 .offset(y: phase >= 5 ? 0 : 8)
+            Spacer()
+            HStack {
+                Brand.caps("Quill for Mac")
+                Spacer()
+                Brand.caps("i")
+            }
+            .padding(.bottom, 34)
         }
+        .padding(.horizontal, 92)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .padding(.horizontal, 96)
-        .task { await play() }
+        .background { ZStack { Brand.vellum; Grain() } }
     }
 
     private func play() async {
         if still { phase = 5; return }
         let beats: [(Int, Int, Animation)] = [
-            (1, 350, .easeOut(duration: 0.7)),
-            (2, 1100, .timingCurve(0.6, 0, 0.3, 1, duration: 0.55)),
-            (3, 650, .timingCurve(0.3, 0, 0.2, 1, duration: 0.7)),
+            (1, 300, .easeOut(duration: 0.8)),
+            (2, 1200, .timingCurve(0.6, 0, 0.3, 1, duration: 0.55)),
+            (3, 600, .timingCurve(0.3, 0, 0.2, 1, duration: 0.7)),
             (4, 1300, .timingCurve(0.23, 1, 0.32, 1, duration: 0.8)),
-            (5, 500, .timingCurve(0.23, 1, 0.32, 1, duration: 0.7)),
+            (5, 450, .timingCurve(0.23, 1, 0.32, 1, duration: 0.7)),
         ]
         for (target, wait, animation) in beats {
             try? await Task.sleep(for: .milliseconds(wait))
@@ -278,14 +420,16 @@ struct Primary: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                Text(label).font(.system(size: 14, weight: .semibold))
+            HStack(spacing: 14) {
+                Text(label.lowercased())
+                    .font(Brand.serif(16, .semibold).lowercaseSmallCaps())
+                    .tracking(2.4)
                 Text("↩").font(.system(size: 12, weight: .medium)).opacity(0.55)
             }
-            .foregroundStyle(Proof.sheet)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 12)
-            .background(Capsule().fill(Proof.ink))
+            .foregroundStyle(Brand.sheet)
+            .padding(.horizontal, 26)
+            .padding(.vertical, 14)
+            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Brand.ink))
         }
         .buttonStyle(Press())
         .keyboardShortcut(.defaultAction)
@@ -302,11 +446,11 @@ struct Onboarding: View {
 
     var body: some View {
         ZStack {
-            Proof.paper.ignoresSafeArea()
-            Grain()
+            Brand.vellum.ignoresSafeArea()
+            Grain().ignoresSafeArea()
             Group {
                 switch run.step {
-                case .overture: Overture { go(.folder) }
+                case .overture: Overture { go(.folder) }.ignoresSafeArea()
                 case .folder: split(1, folder, page: folderPage, slug: run.places.first { $0.url == run.chosen }?.label ?? "Folder")
                 case .voice: split(2, voice, page: voicePage, slug: "Voice.md")
                 case .cowriter: split(3, cowriter, page: cowriterPage, slug: "Your first edit")
@@ -314,63 +458,60 @@ struct Onboarding: View {
             }
             .id(run.step)
             .transition(.asymmetric(
-                insertion: .opacity.combined(with: .offset(y: 12)).animation(Proof.ease.delay(0.06)),
+                insertion: .opacity.combined(with: .offset(y: 12)).animation(Brand.ease.delay(0.06)),
                 removal: .opacity.animation(.easeOut(duration: 0.16))
             ))
-            VStack {
-                HStack(alignment: .firstTextBaseline) {
-                    (Text("Quill").foregroundColor(Proof.ink) + Text(".").foregroundColor(Proof.pencil))
-                        .font(.serif(20, .semibold))
-                    Spacer()
-                    if run.step != .overture {
+            if run.step != .overture {
+                VStack {
+                    HStack(alignment: .center) {
+                        Wordmark(size: 36)
+                        Spacer()
                         Button("Skip setup") { done(nil) }
                             .buttonStyle(.plain)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Proof.ink.opacity(0.5))
+                            .font(Brand.serif(15))
+                            .foregroundStyle(Brand.muted)
                             .keyboardShortcut(.cancelAction)
                     }
-                }
-                Spacer()
-                HStack {
-                    Proof.slug(run.step == .overture ? "Press ↩ to begin" : "Your files stay where they are")
                     Spacer()
-                    Proof.slug(run.step == .overture ? "Quill · Nº 1" : "\(run.step.rawValue) / 3")
+                    HStack {
+                        Brand.caps("Quill for Mac")
+                        Spacer()
+                        Brand.caps(["", "ii", "iii", "iv"][run.step.rawValue])
+                    }
                 }
-                .padding(.top, 12)
-                .overlay(alignment: .top) { Rectangle().fill(Proof.ink.opacity(0.14)).frame(height: 0.75) }
+                .padding(.top, 46)
+                .padding(.bottom, 34)
+                .padding(.horizontal, 48)
             }
-            .padding(.top, 34)
-            .padding(.bottom, 22)
-            .padding(.horizontal, 40)
         }
         .preferredColorScheme(.light)
         .onAppear { run.count() }
     }
 
     private func split<L: View, R: View>(_ n: Int, _ left: L, page: R, slug: String) -> some View {
-        HStack(alignment: .center, spacing: 88) {
+        HStack(alignment: .center, spacing: 80) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                     ForEach(1...3, id: \.self) { i in
                         Rectangle()
-                            .fill(i < n ? Proof.ink : i == n ? Proof.pencil : Proof.ink.opacity(0.15))
+                            .fill(i < n ? Brand.ink : i == n ? Brand.rubric : Brand.ink.opacity(0.15))
                             .frame(width: 28, height: 2)
                     }
                 }
                 .padding(.bottom, 18)
-                Proof.slug(String(format: "%02d — %@", n, names[n]))
-                    .padding(.bottom, 16)
+                Brand.caps("\(["", "One", "Two", "Three"][n]) of three · \(names[n])")
+                    .padding(.bottom, 14)
                 left
             }
-            .frame(width: 400, alignment: .leading)
+            .frame(width: 470, alignment: .leading)
             VStack(alignment: .leading, spacing: 38) {
-                Proof.slug("Proof · \(slug)")
+                Brand.caps("Proof · \(slug)")
                 page
                     .frame(width: 380, height: 470, alignment: .topLeading)
-                    .background(Proof.sheet)
+                    .background(Brand.sheet)
                     .clipShape(Rectangle())
-                    .shadow(color: Proof.ink.opacity(0.10), radius: 0.5, y: 0.5)
-                    .shadow(color: Proof.ink.opacity(0.09), radius: 22, y: 14)
+                    .shadow(color: Brand.ink.opacity(0.10), radius: 0.5, y: 0.5)
+                    .shadow(color: Brand.ink.opacity(0.10), radius: 22, y: 14)
                     .overlay(CropMarks())
             }
         }
@@ -379,8 +520,8 @@ struct Onboarding: View {
 
     private func title(_ text: String, _ body: String) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(text).font(.serif(42, .regular)).foregroundStyle(Proof.ink).fixedSize(horizontal: false, vertical: true)
-            Text(body).font(.serif(17)).foregroundStyle(Proof.ink.opacity(0.62)).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+            Text(text).font(Brand.serif(46)).foregroundStyle(Brand.ink).fixedSize(horizontal: false, vertical: true)
+            Text(body).font(Brand.serif(20)).foregroundStyle(Brand.body).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
         }
         .padding(.bottom, 30)
     }
@@ -389,18 +530,18 @@ struct Onboarding: View {
         Button(action: action) {
             HStack(spacing: 14) {
                 mark().frame(width: 16)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(label).font(.system(size: 14, weight: on ? .semibold : .regular)).foregroundStyle(Proof.ink)
-                    Text(detail).font(.system(size: 11.5)).foregroundStyle(Proof.ink.opacity(0.5)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label).font(Brand.serif(19, on ? .medium : .regular)).foregroundStyle(Brand.ink)
+                    Text(detail).font(Brand.serif(14)).foregroundStyle(Brand.muted).lineLimit(1)
                 }
                 Spacer()
                 if on {
-                    Text("✓").font(.serif(17, .semibold)).foregroundStyle(Proof.pencil)
+                    Text("✓").font(Brand.serif(19, .semibold)).foregroundStyle(Brand.rubric)
                 }
             }
-            .padding(.vertical, 13)
+            .padding(.vertical, 9)
             .contentShape(Rectangle())
-            .overlay(alignment: .bottom) { Rectangle().fill(Proof.ink.opacity(0.12)).frame(height: 0.75) }
+            .overlay(alignment: .bottom) { Rectangle().fill(Brand.ink.opacity(0.14)).frame(height: 0.75) }
         }
         .buttonStyle(Press())
         .disabled(!enabled)
@@ -408,16 +549,20 @@ struct Onboarding: View {
     }
 
     private func radio(_ on: Bool) -> some View {
-        Circle().strokeBorder(on ? Proof.pencil : Proof.ink.opacity(0.35), lineWidth: 1.25)
-            .background(Circle().fill(on ? Proof.pencil : .clear).padding(3.5))
+        Circle().strokeBorder(on ? Brand.rubric : Brand.ink.opacity(0.35), lineWidth: 1.25)
+            .background(Circle().fill(on ? Brand.rubric : .clear).padding(3.5))
             .frame(width: 15, height: 15)
+    }
+
+    private func rule() -> some View {
+        Rectangle().fill(Brand.ink.opacity(0.14)).frame(height: 0.75)
     }
 
     private var folder: some View {
         VStack(alignment: .leading, spacing: 0) {
-            title("Where do you write?", "Quill edits plain Markdown files where they already live. Nothing is copied or uploaded.")
+            title("Where do you write?", "Quill edits the Markdown files in one folder. The files stay where they are.")
             VStack(spacing: 0) {
-                Rectangle().fill(Proof.ink.opacity(0.12)).frame(height: 0.75)
+                rule()
                 ForEach(run.places) { place in
                     let on = run.chosen == place.url
                     row(on: on, mark: { radio(on) }, label: place.label,
@@ -426,13 +571,13 @@ struct Onboarding: View {
                     }
                 }
             }
-            HStack(spacing: 22) {
+            HStack(spacing: 24) {
                 Primary(label: "Continue") {
                     ws.switchVault(run.chosen)
                     go(.voice)
                 }
                 Button("Choose another folder…") { choose() }
-                    .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(Proof.ink.opacity(0.6))
+                    .buttonStyle(.plain).font(Brand.serif(16)).foregroundStyle(Brand.muted)
             }
             .padding(.top, 30)
         }
@@ -440,40 +585,40 @@ struct Onboarding: View {
 
     private var folderPage: some View {
         let c = run.census[run.chosen]
-        return VStack(alignment: .leading, spacing: 9) {
+        return VStack(alignment: .leading, spacing: 8) {
             Text(run.places.first { $0.url == run.chosen }?.label ?? run.chosen.lastPathComponent)
-                .font(.serif(24, .semibold)).foregroundStyle(Proof.ink)
+                .font(Brand.serif(28, .medium)).foregroundStyle(Brand.ink)
             if let c, c.notes > 0 {
                 Text("\(c.notes) notes · \(c.words < 1000 ? "\(c.words)" : "about \((c.words / 1000 * 1000).formatted())") words")
-                    .font(.system(size: 11.5)).foregroundStyle(Proof.ink.opacity(0.5))
-                    .padding(.bottom, 10)
+                    .font(Brand.serif(15).italic()).foregroundStyle(Brand.muted)
+                    .padding(.bottom, 12)
                 ForEach(Array(c.titles.enumerated()), id: \.offset) { i, t in
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(String(format: "%02d", i + 1)).font(.system(size: 10, design: .monospaced)).foregroundStyle(Proof.ink.opacity(0.35))
-                        Text(t).font(.serif(16)).foregroundStyle(Proof.ink.opacity(1 - Double(i) * 0.08)).lineLimit(1)
+                    HStack(alignment: .firstTextBaseline, spacing: 14) {
+                        Text("\(i + 1)").font(Brand.serif(13)).foregroundStyle(Brand.rubric).frame(width: 14, alignment: .trailing)
+                        Text(t).font(Brand.serif(18)).foregroundStyle(Brand.ink.opacity(1 - Double(i) * 0.08)).lineLimit(1)
                     }
                     .transition(.opacity.combined(with: .offset(y: 6)))
                 }
             } else {
-                Text("An empty folder. Quill adds a first note to start from.").font(.serif(16).italic()).foregroundStyle(Proof.ink.opacity(0.55))
+                Text("This folder is empty. Quill adds a first note for you.").font(Brand.serif(18).italic()).foregroundStyle(Brand.muted)
             }
             Spacer()
         }
-        .padding(30)
+        .padding(32)
         .animation(.easeOut(duration: 0.3), value: run.chosen)
     }
 
     private var voice: some View {
         VStack(alignment: .leading, spacing: 0) {
-            title("Let Quill read how you write.", "It measures your sentences, punctuation, and habits, and keeps them in Voice.md, a note you can read and edit. The reading happens on this Mac.")
+            title("Let Quill read how you write.", "Quill measures your sentences, punctuation, and habits on this Mac. It writes the results to Voice.md, a note that you can read and edit.")
             if run.read {
                 Primary(label: "Continue") { go(.cowriter) }
             } else {
-                HStack(spacing: 22) {
-                    Primary(label: run.reading ? "Reading…" : "Read my notes") { readNotes() }
+                HStack(spacing: 24) {
+                    Primary(label: run.reading ? "Reading" : "Read my notes") { readNotes() }
                         .disabled(run.reading)
                     Button("Not now") { go(.cowriter) }
-                        .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(Proof.ink.opacity(0.6))
+                        .buttonStyle(.plain).font(Brand.serif(16)).foregroundStyle(Brand.muted)
                 }
             }
         }
@@ -481,39 +626,39 @@ struct Onboarding: View {
 
     private var voicePage: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text("My voice").font(.serif(24, .semibold)).foregroundStyle(Proof.ink)
+            Text("My voice").font(Brand.serif(28, .medium)).foregroundStyle(Brand.ink)
             if run.lines.isEmpty {
-                Text(run.reading ? "Reading your notes…" : "Your measurements will appear here.")
-                    .font(.serif(15).italic()).foregroundStyle(Proof.ink.opacity(0.5))
+                Text(run.reading ? "Reading your notes." : "Your measurements appear here.")
+                    .font(Brand.serif(17).italic()).foregroundStyle(Brand.muted)
             }
             ForEach(Array(run.lines.enumerated()), id: \.offset) { _, line in
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("¶").font(.serif(13)).foregroundStyle(Proof.pencil)
-                    Text(line).font(.serif(14)).foregroundStyle(Proof.ink).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
+                    Text("¶").font(Brand.serif(15)).foregroundStyle(Brand.rubric)
+                    Text(line).font(Brand.serif(16)).foregroundStyle(Brand.ink).lineSpacing(0).fixedSize(horizontal: false, vertical: true)
                 }
                 .transition(.opacity.combined(with: .offset(y: 8)))
             }
             Spacer()
         }
-        .padding(30)
+        .padding(32)
     }
 
     private var cowriter: some View {
         VStack(alignment: .leading, spacing: 0) {
-            title("Pick your co-writer.", "Quill signs in through the tool itself, so the subscription you already pay for works.")
+            title("Choose your co-writer.", "Quill uses the sign-in of the tool that you choose. Your current subscription works.")
             VStack(spacing: 0) {
-                Rectangle().fill(Proof.ink.opacity(0.12)).frame(height: 0.75)
+                rule()
                 ForEach(AgentSpec.all.filter { $0.requires != nil || ws.hasKey }) { spec in
                     let ready = ws.available(spec)
                     let on = ws.agentID == spec.id
                     row(on: on, enabled: ready != false, mark: {
-                        Circle().fill(ready == true ? Color.greenInk : Proof.ink.opacity(ready == false ? 0.2 : 0.4)).frame(width: 7, height: 7)
+                        Circle().fill(ready == true ? Color.greenInk : Brand.ink.opacity(ready == false ? 0.2 : 0.4)).frame(width: 7, height: 7)
                     }, label: spec.name, detail: ready == false ? (spec.requires == "npx" ? "Needs Node" : "Not installed") : spec.detail) {
                         ws.agentID = spec.id
                     }
                 }
             }
-            Primary(label: "Show me") { done(ws.agentID) }
+            Primary(label: "Open my first edit") { done(ws.agentID) }
                 .padding(.top, 30)
         }
         .onAppear { ws.checkAgents() }
@@ -521,23 +666,23 @@ struct Onboarding: View {
 
     private var cowriterPage: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Your first edit").font(.serif(24, .semibold)).foregroundStyle(Proof.ink)
-            Text("Quill opens one of your own sentences. Press ⌘↩, or hold the right ⌥ key and say what you’d change.")
-                .font(.serif(16)).foregroundStyle(Proof.ink).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            Text("Your first edit").font(Brand.serif(28, .medium)).foregroundStyle(Brand.ink)
+            Text("Quill opens one of your sentences. Press ⌘↩, or hold the right ⌥ key and say the change.")
+                .font(Brand.serif(18)).foregroundStyle(Brand.ink).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 Text("old words").strikethrough(color: Color.redInk).foregroundStyle(Color.redInk)
-                Text("your words").foregroundStyle(Proof.ink).underline(color: Color.greenInk)
+                Text("your words").foregroundStyle(Brand.ink).underline(color: Color.greenInk)
             }
-            .font(.serif(16))
-            .padding(.vertical, 6)
-            Text("One ⌘Z takes the whole edit back.").font(.system(size: 12)).foregroundStyle(Proof.ink.opacity(0.5))
+            .font(Brand.serif(18))
+            .padding(.vertical, 4)
+            Text("One ⌘Z removes the full edit.").font(Brand.serif(15).italic()).foregroundStyle(Brand.muted)
             Spacer()
         }
-        .padding(30)
+        .padding(32)
     }
 
     private func go(_ step: Firstrunner.Step) {
-        withAnimation(still ? nil : Proof.ease) { run.step = step }
+        withAnimation(still ? nil : Brand.ease) { run.step = step }
     }
 
     private func choose() {
@@ -558,9 +703,9 @@ struct Onboarding: View {
         Task {
             let f = await ws.measure()
             let found = describe(f)
-            let lines = found.isEmpty ? ["Not enough writing here yet. Quill will learn from your edits instead."] : found
+            let lines = found.isEmpty ? ["Quill found too little writing here. It learns from your edits instead."] : found
             for line in lines {
-                withAnimation(still ? nil : Proof.ease) { run.lines.append(line) }
+                withAnimation(still ? nil : Brand.ease) { run.lines.append(line) }
                 try? await Task.sleep(for: .milliseconds(still ? 0 : 420))
             }
             run.reading = false
