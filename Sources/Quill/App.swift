@@ -60,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let vault = URL(fileURLWithPath: env["QUILL_VAULT"] ?? saved ?? NSHomeDirectory() + "/Quill")
         let fresh = !FileManager.default.fileExists(atPath: vault.path)
         ws = Workspace(vault: vault)
+        ws.showSettings = { [weak self] in self?.openSettings() }
         if fresh { seed(vault) }
 
         editor = EditorController(ws: ws)
@@ -538,7 +539,9 @@ final class EditorController: NSViewController {
         ws.choreographer?.land()
         Task {
             guard await Listener.authorize() else {
-                ws.phase = .failed("Quill needs the microphone. Allow it in System Settings → Privacy & Security.")
+                ws.fail("Quill needs the microphone to hear you.", remedy: ("Open Settings", {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                }))
                 holding = false
                 return
             }

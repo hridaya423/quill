@@ -21,6 +21,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundleIconFile</key><string>Quill</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
+  <key>NSAccentColorName</key><string>AccentColor</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>Quill listens while you hold the right Option key, so you can talk to your co-writer.</string>
@@ -33,5 +34,7 @@ if [ ! -f build/Quill.icns ]; then
   iconutil -c icns build/Quill.iconset -o build/Quill.icns
 fi
 cp build/Quill.icns "$app/Contents/Resources/Quill.icns"
+xcrun actool assets/Assets.xcassets --compile "$app/Contents/Resources" --platform macosx \
+  --minimum-deployment-target 26.0 --output-partial-info-plist build/assets.plist >/dev/null
 codesign --force --sign - "$app" >/dev/null
 echo "$app"

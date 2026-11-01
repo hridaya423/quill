@@ -26,10 +26,14 @@ final class Workspace {
     var vault: URL
     var notes: [Note] = []
     var current: URL?
-    var phase: Phase = .idle
+    var phase: Phase = .idle {
+        didSet { remedy = nil }
+    }
     var level: Float = 0
     var margin: [MarginNote] = []
     var installed: [String: Bool] = [:]
+    var remedy: (label: String, action: () -> Void)?
+    @ObservationIgnored var showSettings: () -> Void = {}
     var hasKey = Keychain.anthropicKey?.isEmpty == false
     var mode: Mode {
         didSet { UserDefaults.standard.set(mode.rawValue, forKey: "mode") }
@@ -291,6 +295,11 @@ final class Workspace {
             if words.isEmpty { phase = .idle }
             return
         }
+        if available(spec) == false {
+            let need = spec.requires == nil ? "an API key" : spec.requires == "npx" ? "Node" : "the \(spec.requires!) command"
+            fail("\(spec.name) needs \(need). Install it, or choose another co-writer.", remedy: ("Choose…", { [weak self] in self?.showSettings() }))
+            return
+        }
         choreographer?.land()
         flushOrSave()
         let text = editor.string
@@ -359,6 +368,11 @@ final class Workspace {
         } else {
             phase = said.isEmpty ? .done(0) : .said(said)
         }
+    }
+
+    func fail(_ message: String, remedy: (String, () -> Void)? = nil) {
+        phase = .failed(message)
+        self.remedy = remedy.map { (label: $0.0, action: $0.1) }
     }
 
     func cancelTurn() {

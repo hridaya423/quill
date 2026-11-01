@@ -149,7 +149,17 @@ struct Pill: View {
     private func failed(_ message: String) -> some View {
         HStack(spacing: 10) {
             Circle().fill(Color.redInk).frame(width: 7, height: 7)
-            Text(message).font(.system(size: 13)).foregroundStyle(Color.ink).lineLimit(2).frame(maxWidth: 460, alignment: .leading)
+            Text(message).font(.system(size: 13)).foregroundStyle(Color.ink).lineLimit(2).frame(maxWidth: 420, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            if let remedy = ws.remedy {
+                Button(remedy.label) {
+                    remedy.action()
+                    ws.phase = .idle
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.accentInk)
+            }
             Button { ws.phase = .idle } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
                 .buttonStyle(.plain).foregroundStyle(Color.soft)
         }
