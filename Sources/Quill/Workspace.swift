@@ -57,6 +57,12 @@ final class Workspace {
     @ObservationIgnored private var agent: Agent
     @ObservationIgnored private var reply = ""
     @ObservationIgnored private var places: [URL: (NSRange, CGFloat)] = [:]
+    @ObservationIgnored private var held: [Tell] = []
+    @ObservationIgnored private var proposedDoc: String?
+    @ObservationIgnored private var briefed: String?
+    @ObservationIgnored private var undone: Set<Int> = []
+    @ObservationIgnored private var captures: [Int: () -> Void] = [:]
+    @ObservationIgnored lazy var keeper = VoiceKeeper(vault: vault, spec: spec)
     @ObservationIgnored let listener = Listener()
     @ObservationIgnored var turnStarted: CFAbsoluteTime = 0
     @ObservationIgnored var firstChangeAt: CFAbsoluteTime?
@@ -90,6 +96,8 @@ final class Workspace {
 
     private func swapAgent() {
         endTurn()
+        keeper.spec = spec
+        briefed = nil
         agent.shutdown()
         agent = spec.make()
         warm()
@@ -107,6 +115,11 @@ final class Workspace {
         watch()
         warm()
         checkAgents()
+        keeper = VoiceKeeper(vault: vault, spec: spec)
+        let measured = UserDefaults.standard.double(forKey: "measuredAt")
+        if !FileManager.default.fileExists(atPath: keeper.url.path) || Date.now.timeIntervalSince1970 - measured > 86_400 {
+            Task { await measure() }
+        }
         let last = UserDefaults.standard.string(forKey: "last").map { URL(fileURLWithPath: $0) }
         if current == nil, let url = notes.first(where: { $0.url.path == last?.path })?.url ?? notes.first?.url { open(url) }
     }
@@ -278,7 +291,31 @@ final class Workspace {
         propose(disk, editor: editor)
     }
 
+    var voiceSources: [URL] {
+        [vault] + (UserDefaults.standard.stringArray(forKey: "voiceSources") ?? []).map { URL(fileURLWithPath: $0) }.filter { $0 != vault }
+    }
+
+    @discardableResult
+    func measure() async -> Fingerprint {
+        let f = await keeper.measure(voiceSources)
+        UserDefaults.standard.set(f.punctuation["em dashes"] ?? 0, forKey: "emDash")
+        refresh()
+        return f
+    }
+
     private func propose(_ text: String, editor: QuillTextView) {
+        if inTurn, let url = current {
+            let (old, new) = changedParagraphs(base: base, proposed: text)
+            let bad = introducedTells(before: old, after: new, allowEmDash: UserDefaults.standard.double(forKey: "emDash") >= 2)
+            if !bad.isEmpty {
+                held += bad
+                try? editor.string.write(to: url, atomically: true, encoding: .utf8)
+                base = editor.string
+                Ledger.event("held", detail: bad.map { "\($0.kind): \($0.phrase)" }.joined(separator: "; "))
+                return
+            }
+            proposedDoc = text
+        }
         let changes = merge(base: base, current: editor.string, proposed: text)
         base = text
         guard !changes.isEmpty else { return }
@@ -307,7 +344,8 @@ final class Workspace {
         }
         if available(spec) == false {
             let spec = spec
-            Task {
+            Task { [weak self] in
+                guard let self else { return }
                 if let binary = spec.requires { installed[binary] = await Quill.installed(binary) }
                 if available(spec) == false {
                     let need = spec.requires == nil ? "an API key" : spec.requires == "npx" ? "Node" : "the \(spec.requires!) command"
@@ -325,10 +363,15 @@ final class Workspace {
         let sel = editor.selectedRange()
         let selection = sel.length > 0 ? (text as NSString).substring(with: sel) : nil
         let request = Request(words: words, path: url.path, text: text, selection: selection, mode: mode)
-        let body = prompt(request, canEditFiles: agent.canEditFiles)
         inTurn = true
         turn += 1
         let id = turn
+        editor.undoTag = id
+        held = []
+        proposedDoc = nil
+        var retried = false
+        let before = text
+        let voice = keeper.notes
         reply = ""
         margin = []
         turnStarted = CFAbsoluteTimeGetCurrent()
@@ -340,27 +383,42 @@ final class Workspace {
             do {
                 try await agent.prepare(cwd: vault)
                 guard turn == id else { return }
-                try await agent.send(body, base: text) { [weak self] event in
-                    guard let self, self.turn == id else { return }
-                    switch event {
-                    case .activity(let a):
-                        if case .thinking = self.phase { self.phase = .thinking(a, words: words) }
-                    case .text(let t):
-                        self.reply += t
-                    case .proposed(let next):
-                        do {
-                            try next.write(to: url, atomically: true, encoding: .utf8)
-                            self.reconcile()
-                        } catch {
-                            self.phase = .failed("Couldn't save \(url.lastPathComponent).")
+                let brief = agent.conversation == nil || agent.conversation != briefed
+                var body = prompt(request, canEditFiles: agent.canEditFiles, voice: voice, briefing: brief ? Floor.text : nil)
+                for attempt in 0..<2 {
+                    try await agent.send(body, base: self.editor?.string ?? text) { [weak self] event in
+                        guard let self, self.turn == id else { return }
+                        switch event {
+                        case .activity(let a):
+                            if case .thinking = self.phase { self.phase = .thinking(a, words: words) }
+                        case .text(let t):
+                            self.reply += t
+                        case .proposed(let next):
+                            do {
+                                try next.write(to: url, atomically: true, encoding: .utf8)
+                                self.reconcile()
+                            } catch {
+                                self.phase = .failed("Couldn't save \(url.lastPathComponent).")
+                            }
                         }
                     }
+                    guard turn == id else { return }
+                    briefed = agent.conversation
+                    try? await Task.sleep(for: .milliseconds(150))
+                    reconcile()
+                    guard !held.isEmpty, attempt == 0 else { break }
+                    retried = true
+                    phase = .thinking("Revising", words: words)
+                    reply = ""
+                    body = retryPrompt(held, canEditFiles: agent.canEditFiles)
+                    held = []
                 }
             } catch {
                 failure = error.localizedDescription
             }
             guard turn == id else { return }
             await settleTurn(failure: failure, words: words)
+            record(id: id, note: url, request: words, before: before, retried: retried)
         }
     }
 
@@ -378,6 +436,11 @@ final class Workspace {
             return
         }
         let said = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !held.isEmpty, proposedDoc == nil {
+            let phrases = Array(Set(held.map { "“\($0.phrase.trimmingCharacters(in: .whitespaces))”" })).prefix(2).joined(separator: " and ")
+            phase = .said("I held back an edit that used \(phrases). Ask again and I'll try another way.")
+            return
+        }
         if mode == .notes, let editor, let found = QuillCore.notes(from: said, in: editor.string), !found.isEmpty {
             margin = found
             phase = .said(found.count == 1 ? "One note in the margin." : "\(found.count) notes in the margin.")
@@ -385,6 +448,53 @@ final class Workspace {
             phase = said.isEmpty ? .done(n) : .said(said)
         } else {
             phase = said.isEmpty ? .done(0) : .said(said)
+        }
+    }
+
+    private func retryPrompt(_ tells: [Tell], canEditFiles: Bool) -> String {
+        let list = tells.map { "- \($0.kind): “\($0.phrase)”" }.joined(separator: "\n")
+        return """
+        Quill did not apply your last edit. It introduced patterns the writer's editorial rules forbid:
+        \(list)
+        The document is back to how it was before that edit. Make the edit again without these patterns, \(canEditFiles ? "editing the file directly" : "calling the edit tool"). Keep everything else the same. Then reply as before.
+        """
+    }
+
+    private func record(id: Int, note: URL, request: String, before: String, retried: Bool) {
+        guard let proposed = proposedDoc else {
+            if !held.isEmpty || retried {
+                Ledger.append(TurnRecord(id: UUID().uuidString, at: .now, note: note.lastPathComponent, request: request, mode: mode.rawValue,
+                                         agent: agentID, held: held.map(\.phrase), retried: retried, exchanges: []), to: Ledger.turns)
+            }
+            return
+        }
+        let held = held.map(\.phrase), mode = mode.rawValue, agent = agentID
+        let capture = { [weak self] in
+            guard let self else { return }
+            self.captures[id] = nil
+            let kept = self.current == note ? self.editor?.string ?? "" : (try? String(contentsOf: note, encoding: .utf8)) ?? ""
+            var found = exchanges(request: request, before: before, proposed: proposed, kept: kept)
+            if self.undone.contains(id) {
+                found = found.map { var e = $0; if e.outcome == .reverted { e.outcome = .undone }; return e }
+            }
+            Ledger.append(TurnRecord(id: UUID().uuidString, at: .now, note: note.lastPathComponent, request: request, mode: mode,
+                                     agent: agent, held: held, retried: retried, exchanges: found), to: Ledger.turns)
+            self.keeper.distillIfDue()
+        }
+        captures[id] = capture
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            self?.captures[id]?()
+        }
+    }
+
+    func undid(_ tag: Int) {
+        if undone.contains(tag) {
+            undone.remove(tag)
+            Ledger.event("redo", turn: String(tag))
+        } else {
+            undone.insert(tag)
+            Ledger.event("undo", turn: String(tag))
         }
     }
 
@@ -413,6 +523,7 @@ final class Workspace {
     }
 
     func quit() {
+        for capture in Array(captures.values) { capture() }
         endTurn()
         choreographer?.land()
         flushSave()

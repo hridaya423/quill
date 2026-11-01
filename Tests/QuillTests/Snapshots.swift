@@ -127,4 +127,35 @@ struct Snapshots {
             Self.render(settings, "settings", dark: dark)
         }
     }
+
+    @Test(.enabled(if: dir != nil)) func onboarding() async throws {
+        for dark in [true] {
+            let ws = Workspace(vault: try Self.vault())
+            let run = Firstrunner(current: ws.vault)
+            run.places = [
+                Place(url: ws.vault, label: "A new Quill folder", detail: "~/Quill"),
+                Place(url: URL(fileURLWithPath: NSHomeDirectory() + "/Obsidian Vault"), label: "Obsidian Vault", detail: "Obsidian vault · ~/Obsidian Vault"),
+            ]
+            run.chosen = run.places[1].url
+            let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { _ in })
+            let w = Self.window(NSSize(width: 1240, height: 820), dark: dark)
+            w.contentView = host
+            host.frame = NSRect(x: 0, y: 0, width: 1240, height: 820)
+            run.count()
+            try? await Task.sleep(for: .milliseconds(2600))
+            Self.render(host, "onboard-0-overture", dark: dark)
+            run.step = .folder
+            try? await Task.sleep(for: .milliseconds(900))
+            Self.render(host, "onboard-1-folder", dark: dark)
+            run.step = .voice
+            run.lines = describe(fingerprint(["i don't know. so this is pretty much it: the thing works, mostly. we ship it tomorrow (maybe)."]))
+            run.read = true
+            try? await Task.sleep(for: .milliseconds(900))
+            Self.render(host, "onboard-2-voice", dark: dark)
+            run.step = .cowriter
+            ws.installed = ["npx": true, "codex": true, "gemini": false, "opencode": false]
+            try? await Task.sleep(for: .milliseconds(900))
+            Self.render(host, "onboard-3-cowriter", dark: dark)
+        }
+    }
 }

@@ -38,6 +38,7 @@ struct Pill: View {
 
     private var key: String {
         if chrome.commanding { return "command" }
+        if chrome.coach != nil, ws.phase == .idle { return "coach" }
         switch ws.phase {
         case .idle: return chrome.hinting ? "hint" : "idle"
         case .listening: return "listening"
@@ -53,6 +54,8 @@ struct Pill: View {
     private var content: some View {
         if chrome.commanding {
             command
+        } else if let source = chrome.coach, ws.phase == .idle {
+            coach(source)
         } else {
             switch ws.phase {
             case .idle:
@@ -83,6 +86,35 @@ struct Pill: View {
             .fixedSize(horizontal: true, vertical: true)
             .glassEffect(.regular, in: .capsule)
             .transition(.asymmetric(insertion: .scale(scale: 0.95).combined(with: .opacity), removal: .opacity.animation(.easeOut(duration: 0.14))))
+    }
+
+    private func coach(_ source: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("YOUR FIRST EDIT").font(.system(size: 10, weight: .semibold)).tracking(1).foregroundStyle(Color.accentInk)
+            Text("This sentence is yours, from “\(source)”. Hold the right ⌥ key and say what you'd change.")
+                .font(.serif(16)).foregroundStyle(Color.ink).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button {
+                    ws.ask("Make this sentence say what I mean, in my voice.")
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Make it say what I mean").font(.system(size: 13, weight: .semibold))
+                        Text("⌘↩").font(.system(size: 11, weight: .medium)).opacity(0.6)
+                    }
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.accentInk))
+                }
+                .buttonStyle(Press())
+                .keyboardShortcut(.return, modifiers: .command)
+                Text("or press ⌘K to type").font(.system(size: 12)).foregroundStyle(Color.soft)
+            }
+        }
+        .padding(18)
+        .frame(width: 420, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .transition(.asymmetric(insertion: .scale(scale: 0.96, anchor: .bottom).combined(with: .opacity), removal: .opacity))
     }
 
     private var hint: some View {
@@ -342,7 +374,7 @@ struct ModeChooser: View {
                 option(.guided, "Guided", "Edits land in the text while you watch")
                 option(.notes, "Notes", "Thoughts in the margin. Edits when you ask")
             }
-            Text("Change it any time from the Agent menu.")
+            Text("Change it any time from the Agent menu. Your voice notes live in Voice.md.")
                 .font(.system(size: 11.5)).foregroundStyle(Color.soft)
         }
         .padding(18)
@@ -392,6 +424,12 @@ struct NoteCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let lens = note.lens {
+                Text(lens.uppercased())
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.accentInk.opacity(0.8))
+            }
             Text(note.note)
                 .font(.system(size: 12.5))
                 .foregroundStyle(Color.ink.opacity(0.88))

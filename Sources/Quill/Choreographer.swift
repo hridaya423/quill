@@ -22,9 +22,14 @@ extension QuillTextView {
     func registerUndo(_ inverse: [Change]) {
         guard let um = undoManager, !inverse.isEmpty else { return }
         breakUndoCoalescing()
+        let tag = undoTag
         um.registerUndo(withTarget: self) { view in
             MainActor.assumeIsolated {
+                let previous = view.undoTag
+                view.undoTag = tag
                 view.registerUndo(view.commit(inverse))
+                view.undoTag = previous
+                view.onUndo?(tag)
             }
         }
         um.setActionName("Quill Edit")

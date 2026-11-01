@@ -15,6 +15,7 @@ struct AgentError: LocalizedError {
 @MainActor
 protocol Agent: AnyObject {
     var canEditFiles: Bool { get }
+    var conversation: String? { get }
     func prepare(cwd: URL) async throws
     func send(_ prompt: String, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws
     func cancel()
@@ -198,6 +199,7 @@ func inside(_ path: String, _ root: URL) -> Bool {
 final class ACPAgent: Agent {
     let command: String
     let canEditFiles = true
+    var conversation: String? { session }
     private var rpc: RPC?
     private var session: String?
     private var cwd: URL?
@@ -320,6 +322,7 @@ func activity(_ kind: String?, file: String?, title: String?) -> String {
 @MainActor
 final class CodexAgent: Agent {
     let canEditFiles = true
+    var conversation: String? { thread }
     private var rpc: RPC?
     private var thread: String?
     private var turn: String?
@@ -450,6 +453,7 @@ enum Keychain {
 @MainActor
 final class AnthropicAgent: Agent {
     let canEditFiles = false
+    let conversation: String? = nil
     private var previous: String?
 
     func prepare(cwd: URL) async throws {}

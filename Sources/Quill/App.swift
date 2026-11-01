@@ -10,6 +10,8 @@ final class Chrome {
     var hinting = !UserDefaults.standard.bool(forKey: "spoke")
     var choosingMode = false
     var selectedWords = 0
+    var coach: String?
+    var coachStarted: Date?
     var history: [String] = UserDefaults.standard.stringArray(forKey: "history") ?? []
     var recall: Int?
     var stash = ""
@@ -52,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var window: NSWindow!
     private var settings: NSWindow?
+    private var overlay: NSView?
     private var ws: Workspace!
     private var editor: EditorController!
 
@@ -92,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = menu()
         ws.start()
         NSApp.activate()
+        if !UserDefaults.standard.bool(forKey: "onboarded") || ProcessInfo.processInfo.arguments.contains("--onboarding") { onboard() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -263,6 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.windowsMenu = windowMenu
         NSApp.helpMenu = add("Help", [
             item("Welcome to Quill", #selector(welcome), target: self),
+            item("Show Onboarding", #selector(onboard), target: self),
         ])
         return bar
     }
@@ -297,6 +302,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func trash() {
         guard let note = ws.notes.first(where: { $0.url == ws.current }) else { return }
         ws.trash(note)
+    }
+
+    @objc func onboard() {
+        guard let content = window.contentView, overlay == nil else { return }
+        UserDefaults.standard.set(Date.now.timeIntervalSince1970, forKey: "onboardStarted")
+        Ledger.event("onboarding-started")
+        let run = Firstrunner(current: ws.vault)
+        let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { [weak self] picked in self?.landed(picked) })
+        host.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(host)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            host.topAnchor.constraint(equalTo: content.topAnchor),
+            host.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
+        overlay = host
+    }
+
+    private func landed(_ picked: (sentence: String, source: String)?) {
+        let (sentence, source) = picked ?? ("We are basically trying to kind of build a tool that maybe helps people write better, in a way.", "a sample pitch")
+        let url = ws.vault.appending(path: "Your first edit.md")
+        try? "# Your first edit\n\n\(sentence)\n".write(to: url, atomically: true, encoding: .utf8)
+        ws.refresh()
+        ws.open(url)
+        let r = (editor.text.string as NSString).range(of: sentence)
+        if r.location != NSNotFound { editor.text.setSelectedRange(r) }
+        window.makeFirstResponder(editor.text)
+        editor.chrome.hinting = false
+        editor.chrome.coach = source
+        editor.chrome.coachStarted = .now
+        UserDefaults.standard.set(true, forKey: "onboarded")
+        Ledger.event("onboarding-finished")
+        guard let overlay else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.15 : 0.7
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.77, 0, 0.175, 1)
+            overlay.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                overlay.removeFromSuperview()
+                self?.overlay = nil
+            }
+        })
     }
 
     @objc private func welcome() {
@@ -415,6 +464,7 @@ final class EditorController: NSViewController {
         choreographer.onFinish = { [weak self] n in self?.ws.finishedPlaying(n) }
         ws.editor = text
         ws.choreographer = choreographer
+        text.onUndo = { [weak self] tag in self?.ws.undid(tag) }
         text.onEdit = { [weak self] in
             self?.ws.edited()
             self?.layoutNotes()
@@ -512,6 +562,13 @@ final class EditorController: NSViewController {
     private func afterTurn() {
         switch ws.phase {
         case .said, .done:
+            if chrome.coach != nil {
+                chrome.coach = nil
+                let started = UserDefaults.standard.double(forKey: "onboardStarted")
+                if started > 0 {
+                    Ledger.event("first-edit", detail: String(format: "%.1f", Date.now.timeIntervalSince1970 - started))
+                }
+            }
             if chrome.hinting {
                 chrome.hinting = false
                 UserDefaults.standard.set(true, forKey: "spoke")
@@ -641,7 +698,10 @@ final class EditorController: NSViewController {
                 note: note,
                 active: activeNote == note.id,
                 apply: { [weak self] in self?.apply(note) },
-                dismiss: { [weak self] in self?.ws.margin.removeAll { $0.id == note.id } },
+                dismiss: { [weak self] in
+                    Ledger.event("note-dismissed", detail: "\(note.lens ?? "-"): \(note.note)")
+                    self?.ws.margin.removeAll { $0.id == note.id }
+                },
                 hover: { [weak self] on in
                     guard let self else { return }
                     let next = on ? note.id : (self.activeNote == note.id ? nil : self.activeNote)
@@ -656,6 +716,7 @@ final class EditorController: NSViewController {
     }
 
     private func apply(_ note: MarginNote) {
+        Ledger.event("note-applied", detail: "\(note.lens ?? "-"): \(note.note)")
         ws.margin.removeAll { $0.id == note.id }
         let mode = ws.mode
         ws.mode = .guided
@@ -802,6 +863,21 @@ struct AgentBadge: View {
 struct SettingsView: View {
     @Bindable var ws: Workspace
     @State private var key = Keychain.read("anthropic") ?? ""
+    @State private var measuring = false
+
+    private var learning: String {
+        let turns = Ledger.read(TurnRecord.self, from: Ledger.turns)
+        let edits = turns.flatMap(\.exchanges)
+        guard !edits.isEmpty else { return "Quill measures your notes and learns from every edit you keep, undo, or rewrite. All of it stays on this Mac." }
+        let kept = edits.filter { $0.outcome == .kept }.count
+        return "Learned from \(edits.count) edits across \(turns.count) requests. You kept \(kept * 100 / edits.count)%. Everything stays on this Mac."
+    }
+
+    private func setSources(_ urls: [URL]) {
+        UserDefaults.standard.set(urls.filter { $0 != ws.vault }.map(\.path), forKey: "voiceSources")
+        measuring = true
+        Task { await ws.measure(); measuring = false }
+    }
 
     var body: some View {
         Form {
@@ -821,6 +897,38 @@ struct SettingsView: View {
             } footer: {
                 Text("Stored in your Keychain. Used only when Anthropic API is the co-writer.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            Section {
+                let sources = ws.voiceSources
+                ForEach(sources, id: \.self) { folder in
+                    HStack {
+                        Image(systemName: "folder").foregroundStyle(Color.soft)
+                        Text(folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        if folder != ws.vault {
+                            Button("Remove") { setSources(sources.filter { $0 != folder }) }.buttonStyle(.link)
+                        }
+                    }
+                }
+                HStack {
+                    Button("Learn from another folder…") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        if panel.runModal() == .OK, let url = panel.url { setSources(sources + [url]) }
+                    }
+                    Button(measuring ? "Measuring…" : "Measure again") {
+                        measuring = true
+                        Task { await ws.measure(); measuring = false }
+                    }
+                    .disabled(measuring)
+                    Spacer()
+                    Button("Open Voice.md") { ws.refresh(); ws.open(ws.keeper.url) }
+                }
+            } header: {
+                Text("Voice")
+            } footer: {
+                Text(learning).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Section("Answers") {
                 Picker("Answer with", selection: $ws.mode) {

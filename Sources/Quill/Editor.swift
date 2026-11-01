@@ -84,6 +84,8 @@ enum Theme {
 @MainActor
 final class QuillTextView: NSTextView {
     var onEdit: (() -> Void)?
+    var onUndo: ((Int) -> Void)?
+    var undoTag = 0
     var beforeKey: (() -> Void)?
     var gutter = false {
         didSet { if gutter != oldValue { setFrameSize(frame.size) } }

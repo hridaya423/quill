@@ -21,9 +21,17 @@ public struct Request: Sendable {
     }
 }
 
-public func prompt(_ r: Request, canEditFiles: Bool) -> String {
-    var lines = [
-        "You are the co-writer inside Quill, a calm Markdown editor. The writer is looking at \(r.path) and just said:",
+public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, briefing: String? = nil) -> String {
+    var lines: [String] = []
+    if let briefing { lines += [briefing, "", "---", ""] }
+    if let voice, !voice.isEmpty {
+        lines += [
+            "The writer's voice notes. Match this voice. These are preferences: the editorial rules win when they conflict.",
+            "<voice>", voice, "</voice>", "",
+        ]
+    }
+    lines += [
+        "You are the co-writer inside Quill, a calm Markdown editor. Follow the editorial rules from the start of this session in every edit. The writer is looking at \(r.path) and just said:",
         "",
         "\"\(r.words)\"",
         "",
@@ -40,14 +48,14 @@ public func prompt(_ r: Request, canEditFiles: Bool) -> String {
         lines += [
             "If they want the text changed, \(how). Make the smallest edits that do what they asked. Keep their voice. Leave every other word exactly as it is. Never touch other files and never run commands.",
             "If they asked a question or want your opinion, don't edit. Answer instead.",
-            "Finish with a plain-text reply for them. After an edit: one short sentence, at most 12 words, naming what you changed; don't quote the new text or mention what you left alone. For an opinion: up to three sentences, specific and honest. No Markdown, no lists, no preamble.",
+            "Finish with a plain-text reply for them. After an edit: one short sentence, at most 12 words, naming what you changed; don't quote the new text or mention what you left alone. For an opinion: up to three sentences, specific and honest, the way a good editor talks. No Markdown, no lists, no preamble, no em dashes.",
         ]
     case .notes:
         lines += [
             "Don't edit the document unless they explicitly ask you to change the text; if they do, \(how) with the smallest edits that do it.",
             "Otherwise reply with only a JSON array of margin notes and nothing else, like:",
-            #"[{"quote": "exact words from the document", "note": "what you think and why, in one or two sentences"}]"#,
-            "Each quote must be copied exactly from the document, 3 to 12 words long. Give at most 6 notes, most important first.",
+            #"[{"quote": "exact words from the document", "lens": "Cut", "note": "what you think and why, in one or two sentences"}]"#,
+            "Each quote must be copied exactly from the document, 3 to 12 words long. The lens is one of: \(lenses.joined(separator: ", ")). Give at most 6 notes, most important first. Write notes like a great editor in the margin: specific, brief, no praise padding, no em dashes.",
         ]
     }
     return lines.joined(separator: "\n")
@@ -58,6 +66,7 @@ public struct MarginNote: Equatable, Sendable, Identifiable {
     public var range: NSRange
     public var quote: String
     public var note: String
+    public var lens: String?
 }
 
 public func notes(from reply: String, in text: String) -> [MarginNote]? {
@@ -75,7 +84,8 @@ public func notes(from reply: String, in text: String) -> [MarginNote]? {
         if r.location == NSNotFound { r = doc.range(of: quote, options: [.caseInsensitive, .diacriticInsensitive]) }
         guard r.location != NSNotFound, !used.contains(where: { NSIntersectionRange($0, r).length > 0 }) else { return nil }
         used.append(r)
-        return MarginNote(id: i, range: r, quote: quote, note: note)
+        let lens = item["lens"].flatMap { l in lenses.first { $0.caseInsensitiveCompare(l) == .orderedSame } }
+        return MarginNote(id: i, range: r, quote: quote, note: note, lens: lens)
     }
     .sorted { $0.range.location < $1.range.location }
 }
