@@ -93,6 +93,9 @@ struct Snapshots {
             await shot("listening")
             ws.phase = .thinking("Reading pitch.md", words: "make the first sentence confident and short")
             await shot("thinking")
+            ws.live = "The opening hedges three times before it says anything. I'll cut it to one confident sentence and leave the rest"
+            await shot("streaming")
+            ws.live = ""
             ws.phase = .applying(3)
             await shot("applying")
             ws.phase = .done(3)
@@ -144,12 +147,15 @@ struct Snapshots {
             """, in: doc) ?? []
             await shot("notes")
             ws.margin = []
-            let settings = NSHostingView(rootView: SettingsView(ws: ws, chrome: editor.chrome))
-            settings.frame = NSRect(origin: .zero, size: settings.fittingSize)
-            let sw = Self.window(settings.fittingSize, dark: dark)
-            sw.contentView = settings
-            try? await Task.sleep(for: .milliseconds(300))
-            Self.render(settings, "settings", dark: dark)
+            ws.installed = ["npx": true, "codex": true, "gemini": false, "opencode": false]
+            for pane in Pane.allCases {
+                let settings = NSHostingView(rootView: PaneView(pane: pane, ws: ws, chrome: editor.chrome))
+                settings.frame = NSRect(origin: .zero, size: settings.fittingSize)
+                let sw = Self.window(settings.fittingSize, dark: dark)
+                sw.contentView = settings
+                try? await Task.sleep(for: .milliseconds(300))
+                Self.render(settings, "settings-\(pane.rawValue)", dark: dark)
+            }
         }
     }
 

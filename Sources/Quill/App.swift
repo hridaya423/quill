@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var sidebar: NSSplitViewItem!
     private var settings: NSWindow?
+    private var tabs: SettingsTabs?
     private var overlay: NSView?
     private var ws: Workspace!
     private var editor: EditorController!
@@ -67,12 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let vault = URL(fileURLWithPath: env["QUILL_VAULT"] ?? Prefs.vault ?? NSHomeDirectory() + "/Quill")
         let fresh = !FileManager.default.fileExists(atPath: vault.path)
         ws = Workspace(vault: vault)
-        ws.showSettings = { [weak self] in self?.openSettings() }
+        ws.showSettings = { [weak self] in self?.show($0) }
         if fresh { seed(vault) }
 
         editor = EditorController(ws: ws)
         let split = NSSplitViewController()
-        let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws, chrome: editor.chrome, settings: { [weak self] in self?.openSettings() })))
+        let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws, chrome: editor.chrome, settings: { [weak self] in self?.show($0) })))
         sidebar = side
         side.minimumThickness = 210
         side.maximumThickness = 320
@@ -232,10 +233,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         let agents = NSMenu(title: "Co-writer")
         for (i, spec) in AgentSpec.all.enumerated() {
-            agents.addItem(item(spec.name, #selector(chooseAgent(_:)), target: self, tag: i))
+            let row = item(spec.name, #selector(chooseAgent(_:)), target: self, tag: i)
+            row.image = Mark.image(spec, dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+            agents.addItem(row)
         }
         agents.addItem(.separator())
-        agents.addItem(item("Settings…", #selector(openSettings), target: self))
+        agents.addItem(item("Co-writer Settings…", #selector(moreModels), target: self))
         let agentsItem = item("Co-writer", nil)
         agentsItem.submenu = agents
         let models = NSMenu(title: "Model")
@@ -402,15 +405,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func openSettings() {
+    @objc private func openSettings() { show(nil) }
+
+    func show(_ pane: Pane?) {
         if settings == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(ws: ws, chrome: editor.chrome)))
-            w.title = "Settings"
+            let tabs = SettingsTabs.make(ws, editor.chrome)
+            let w = NSWindow(contentViewController: tabs)
             w.styleMask = [.titled, .closable]
+            w.toolbarStyle = .preference
             w.isReleasedWhenClosed = false
-            w.center()
+            w.setFrameAutosaveName("Settings")
+            tabs.show(Prefs.pane.flatMap(Pane.init(rawValue:)) ?? .general)
+            if !w.setFrameUsingName("Settings") { w.center() }
             settings = w
+            self.tabs = tabs
         }
+        if let pane { tabs?.show(pane) }
         settings?.makeKeyAndOrderFront(nil)
     }
 
@@ -451,13 +461,22 @@ extension AppDelegate: NSMenuDelegate {
             menu.addItem(empty)
             return
         }
-        for model in ws.models {
+        for model in ws.recommended {
             let i = NSMenuItem(title: model.name, action: #selector(chooseModel(_:)), keyEquivalent: "")
             i.target = self
             i.representedObject = model.id
+            i.state = model == ws.model ? .on : .off
             menu.addItem(i)
         }
+        if ws.models.count > ws.recommended.count {
+            menu.addItem(.separator())
+            let more = NSMenuItem(title: "More Models…", action: #selector(moreModels), keyEquivalent: "")
+            more.target = self
+            menu.addItem(more)
+        }
     }
+
+    @objc private func moreModels() { show(.cowriters) }
 }
 
 extension EditorController: NSMenuItemValidation {
@@ -479,7 +498,7 @@ final class EditorController: NSViewController {
     fileprivate var scroll: NSScrollView!
     private var cards: [Int: NSHostingView<NoteCard>] = [:]
     private var activeNote: Int?
-    private var changeCard: NSHostingView<ChangeCard>?
+    private var changeCard: NSHostingView<Gloss>?
     private var hovered: Int?
     private var overCard = false
     private var monitor: Any?
@@ -760,14 +779,21 @@ final class EditorController: NSViewController {
 
     private func layoutCard() {
         let id = overCard ? changeCard?.rootView.hunk.id : hovered ?? ws.focused?.id
-        guard let id, let hunk = ws.review.hunk(id), let rect = text.segments(hunk.range).last ?? text.segments(NSRange(location: hunk.range.location, length: 0)).first else {
+        text.focused = id
+        if ws.focusID != id { ws.focusID = id }
+        guard let id, let hunk = ws.review.hunk(id), let bar = text.bar(hunk) else {
             changeCard?.removeFromSuperview()
             changeCard = nil
             overCard = false
             return
         }
-        let card = ChangeCard(
+        let right = text.textContainerOrigin.x + (text.textContainer?.size.width ?? Theme.column) + 24
+        let room = text.bounds.width - right - 20
+        let width: CGFloat? = room >= 150 ? min(220, room) : nil
+        let boxed = width == nil
+        let gloss = Gloss(
             hunk: hunk,
+            width: width,
             keep: { [weak self] in
                 self?.overCard = false
                 self?.ws.keep([hunk])
@@ -781,20 +807,22 @@ final class EditorController: NSViewController {
                 if !on { self?.layoutCard() }
             }
         )
-        let host = changeCard ?? {
-            let h = NSHostingView(rootView: card)
+        if changeCard?.rootView.hunk.id != id || changeCard?.rootView.width != width {
+            changeCard?.removeFromSuperview()
+            let h = NSHostingView(rootView: gloss)
             h.sizingOptions = [.intrinsicContentSize]
             text.addSubview(h)
             changeCard = h
-            return h
-        }()
-        host.rootView = card
+        }
+        guard let host = changeCard else { return }
+        host.rootView = gloss
         let size = host.fittingSize
-        let first = text.segments(hunk.range).first ?? rect
-        let x = min(max(text.textContainerInset.width + Theme.hang - 12, first.minX - 26), text.bounds.width - size.width - 4)
-        let below = CGRect(x: x, y: rect.maxY - 6, width: size.width, height: size.height)
-        let visible = scroll.contentView.documentVisibleRect
-        host.frame = below.maxY < visible.maxY - 110 ? below : CGRect(x: x, y: first.minY - size.height + 6, width: size.width, height: size.height)
+        if boxed {
+            let x = min(max(text.textContainerOrigin.x + Theme.hang, bar.minX + 20), text.bounds.width - size.width - 12)
+            host.frame = CGRect(x: x, y: bar.maxY + 8, width: size.width, height: size.height)
+        } else {
+            host.frame = CGRect(x: right, y: bar.minY - 2, width: size.width, height: size.height)
+        }
     }
 
     private func layoutNotes() {
@@ -869,7 +897,7 @@ func stamp(_ date: Date, now: Date = .now) -> String {
 struct Sidebar: View {
     @Bindable var ws: Workspace
     @Bindable var chrome: Chrome
-    var settings: () -> Void = {}
+    var settings: (Pane?) -> Void = { _ in }
     @State private var renaming: Note?
     @State private var name = ""
     @State private var query = ""
@@ -984,7 +1012,7 @@ struct EmptyState: View {
 
 struct AgentBadge: View {
     @Bindable var ws: Workspace
-    var settings: () -> Void
+    var settings: (Pane?) -> Void
     @State private var hovering = false
 
     private var state: (Color, String?) {
@@ -1008,28 +1036,50 @@ struct AgentBadge: View {
     var body: some View {
         let (dot, note) = state
         Menu {
-            Picker("Co-writer", selection: $ws.agentID) {
-                ForEach(AgentSpec.all) { spec in
-                    Text(spec.name).tag(spec.id)
-                }
-            }
-            .pickerStyle(.inline)
-            if !ws.models.isEmpty {
+            if ws.models.isEmpty {
+                Text(ws.busy ? "Connecting…" : "Models load when \(ws.spec.name) connects")
+            } else {
                 Picker("Model", selection: Binding(get: { ws.model?.id ?? "" }, set: { ws.choose(model: $0) })) {
-                    ForEach(ws.models) { m in Text(m.name).tag(m.id) }
+                    ForEach(ws.recommended) { m in Text(m.name).tag(m.id) }
                 }
                 .pickerStyle(.inline)
+                if ws.models.count > ws.recommended.count {
+                    Button("More Models…") { settings(.cowriters) }
+                }
             }
+            Divider()
             Picker("Answer with", selection: $ws.mode) {
                 Text("Guided Edits").tag(Mode.guided)
                 Text("Margin Notes").tag(Mode.notes)
             }
             .pickerStyle(.inline)
             Divider()
-            Button("Settings…", action: settings)
+            Menu("Co-writer") {
+                Picker("Co-writer", selection: $ws.agentID) {
+                    ForEach(AgentSpec.all) { spec in
+                        Label {
+                            Text(spec.name)
+                        } icon: {
+                            if let image = Mark.image(spec, dark: false) { Image(nsImage: image) }
+                        }
+                        .tag(spec.id)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+            Button("Settings…") { settings(nil) }
         } label: {
-            HStack(spacing: 8) {
-                Circle().fill(dot).frame(width: 6, height: 6)
+            HStack(spacing: 9) {
+                Mark(spec: ws.spec, size: 16)
+                    .frame(width: 26, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color(nsColor: Theme.paper)))
+                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(nsColor: Theme.rule), lineWidth: 0.5))
+                    .overlay(alignment: .bottomTrailing) {
+                        Circle().fill(dot).frame(width: 7, height: 7)
+                            .overlay(Circle().strokeBorder(Color(nsColor: Theme.sheet), lineWidth: 1.5))
+                            .offset(x: 2, y: 2)
+                    }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(ws.spec.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.ink)
                     Text(note ?? detail)
@@ -1056,148 +1106,5 @@ struct AgentBadge: View {
         .padding(.bottom, 10)
         .help("Co-writer, model, and how it answers")
         .accessibilityLabel("\(ws.spec.name), \(note ?? detail)")
-    }
-}
-
-struct SettingsView: View {
-    @Bindable var ws: Workspace
-    @Bindable var chrome: Chrome
-    @State private var key = Keychain.read("anthropic") ?? ""
-    @State private var measuring = false
-
-    private var learning: String {
-        let turns = Ledger.read(TurnRecord.self, from: Ledger.turns)
-        let edits = turns.flatMap(\.exchanges).filter { $0.outcome != .unreviewed }
-        guard !edits.isEmpty else { return "Quill measures your notes and learns from every change you keep, revert, or rewrite. All of it stays on this Mac." }
-        let kept = edits.filter { $0.outcome == .kept }.count
-        return "Learned from \(edits.count) reviewed changes across \(turns.count) requests. You kept \(kept * 100 / edits.count)%. Everything stays on this Mac."
-    }
-
-    private func setSources(_ urls: [URL]) {
-        Prefs.voiceSources = urls.filter { $0 != ws.vault }.map(\.path)
-        measuring = true
-        Task { await ws.measure(); measuring = false }
-    }
-
-    private func saveKey() {
-        let clean = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard clean != (Keychain.read("anthropic") ?? "") else { return }
-        Keychain.write("anthropic", clean)
-        ws.hasKey = Keychain.anthropicKey?.isEmpty == false
-    }
-
-    var body: some View {
-        Form {
-            Section("Co-writer") {
-                ForEach(AgentSpec.all) { spec in
-                    row(spec)
-                }
-                if !ws.models.isEmpty {
-                    Picker("Model", selection: Binding(get: { ws.model?.id ?? "" }, set: { ws.choose(model: $0) })) {
-                        ForEach(ws.models) { m in Text(m.name).tag(m.id) }
-                    }
-                }
-            }
-            Section {
-                SecureField("API key", text: $key, prompt: Text("sk-ant-…"))
-                    .onSubmit(saveKey)
-                    .onChange(of: key) {
-                        Task {
-                            try? await Task.sleep(for: .milliseconds(600))
-                            saveKey()
-                        }
-                    }
-            } header: {
-                Text("Anthropic API")
-            } footer: {
-                Text("Stored in your Keychain. Used only when Anthropic API is the co-writer.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            Section {
-                Picker("Hold to talk", selection: $chrome.talkKey) {
-                    ForEach(TalkKey.allCases) { k in Text(k.title).tag(k) }
-                }
-                Text("Or press ⇧⌘K to start talking and ↩ to send, without holding a key.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            } header: {
-                Text("Talk")
-            }
-            Section {
-                let sources = ws.voiceSources
-                ForEach(sources, id: \.self) { folder in
-                    HStack {
-                        Image(systemName: "folder").foregroundStyle(Color.soft)
-                        Text(folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        if folder != ws.vault {
-                            Button("Remove") { setSources(sources.filter { $0 != folder }) }.buttonStyle(.link)
-                        }
-                    }
-                }
-                HStack {
-                    Button("Learn from another folder…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseDirectories = true
-                        panel.canChooseFiles = false
-                        if panel.runModal() == .OK, let url = panel.url { setSources(sources + [url]) }
-                    }
-                    Button(measuring ? "Measuring…" : "Measure again") {
-                        measuring = true
-                        Task { await ws.measure(); measuring = false }
-                    }
-                    .disabled(measuring)
-                    Spacer()
-                    Button("Open Voice.md") { ws.refresh(); ws.open(ws.keeper.url) }
-                }
-            } header: {
-                Text("Voice")
-            } footer: {
-                Text(learning).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            Section("Answers") {
-                Picker("Answer with", selection: $ws.mode) {
-                    Text("Guided Edits").tag(Mode.guided)
-                    Text("Margin Notes").tag(Mode.notes)
-                }
-                .pickerStyle(.radioGroup)
-                Text(ws.mode == .guided
-                     ? "Changes land in the text, tinted until you keep or revert them. One ⌘Z takes a request back."
-                     : "Quill leaves notes in the margin. Click Apply on a note to make the edit.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .tint(Color.accentInk)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
-        .onAppear { ws.checkAgents() }
-        .onDisappear(perform: saveKey)
-    }
-
-    private func row(_ spec: AgentSpec) -> some View {
-        let available = ws.available(spec)
-        let chosen = ws.agentID == spec.id
-        return HStack(spacing: 10) {
-            Image(systemName: chosen ? "largecircle.fill.circle" : "circle")
-                .foregroundStyle(chosen ? Color.accentInk : Color.soft)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(spec.name).font(.system(size: 13, weight: .medium))
-                Text(spec.detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
-            }
-            Spacer()
-            switch available {
-            case true?:
-                Text("Ready").font(.system(size: 11)).foregroundStyle(Color.greenInk)
-            case false?:
-                Text(spec.missing).font(.system(size: 11)).foregroundStyle(Color.soft)
-            case nil:
-                ProgressView().controlSize(.mini)
-            }
-        }
-        .opacity(available == false && !chosen ? 0.55 : 1)
-        .contentShape(Rectangle())
-        .onTapGesture { ws.agentID = spec.id }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
     }
 }

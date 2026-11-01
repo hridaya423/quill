@@ -6,6 +6,7 @@ enum AgentEvent {
     case text(String)
     case proposed(String)
     case notes(String)
+    case focus(String)
 }
 
 struct AgentError: LocalizedError {
@@ -38,18 +39,23 @@ struct AgentSpec: Identifiable, Hashable {
     var detail: String
     var kind: Kind
     var defaultModel: String?
+    var mark: String
+    var install: String?
+    var picks: [String] = []
 
     static let all: [AgentSpec] = [
         AgentSpec(id: "claude", name: "Claude Code", detail: "Your Claude subscription, through Claude Code",
-                  kind: .acp(["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.99.1"]), defaultModel: "opus"),
+                  kind: .acp(["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.99.1"]), defaultModel: "opus",
+                  mark: "claude", install: "Install Node from nodejs.org", picks: ["opus", "sonnet", "haiku"]),
         AgentSpec(id: "codex", name: "Codex", detail: "Your ChatGPT subscription, through the Codex CLI",
-                  kind: .codex(["codex", "app-server"])),
+                  kind: .codex(["codex", "app-server"]), mark: "codex", install: "npm install -g @openai/codex"),
         AgentSpec(id: "anthropic", name: "Anthropic API", detail: "Claude with your API key",
-                  kind: .anthropic, defaultModel: "claude-opus-5-5"),
+                  kind: .anthropic, defaultModel: "claude-opus-5-5", mark: "claude",
+                  picks: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]),
         AgentSpec(id: "gemini", name: "Gemini CLI", detail: "Google's agent over ACP",
-                  kind: .acp(["gemini", "--experimental-acp"])),
+                  kind: .acp(["gemini", "--experimental-acp"]), mark: "gemini", install: "npm install -g @google/gemini-cli"),
         AgentSpec(id: "opencode", name: "OpenCode", detail: "Any model OpenCode is signed in to",
-                  kind: .acp(["opencode", "acp"])),
+                  kind: .acp(["opencode", "acp"]), mark: "opencode", install: "npm install -g opencode-ai"),
     ]
 
     static func named(_ id: String) -> AgentSpec { all.first { $0.id == id } ?? all[0] }
@@ -405,6 +411,7 @@ final class ACPAgent: Agent {
         case "session/request_permission":
             let options = params["options"] as? [[String: Any]] ?? []
             let call = params["toolCall"] as? [String: Any] ?? [:]
+            if let old = (call["rawInput"] as? [String: Any])?["old_string"] as? String, !old.isEmpty { events?(.focus(old)) }
             let locations = call["locations"] as? [[String: Any]] ?? []
             let paths = locations.compactMap { $0["path"] as? String }
             let allowed = paths.count == locations.count
@@ -427,6 +434,8 @@ final class ACPAgent: Agent {
             if let content = update["content"] as? [String: Any], let text = content["text"] as? String { events?(.text(text)) }
         case "agent_thought_chunk":
             events?(.activity("Thinking"))
+        case "tool_call_update":
+            if let old = (update["rawInput"] as? [String: Any])?["old_string"] as? String, !old.isEmpty { events?(.focus(old)) }
         case "tool_call":
             let file = (update["locations"] as? [[String: Any]])?.first?["path"] as? String
             events?(.activity(activity(update["kind"] as? String, file: file, title: update["title"] as? String)))

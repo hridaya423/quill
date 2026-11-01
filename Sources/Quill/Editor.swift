@@ -19,15 +19,18 @@ enum Theme {
         }
     }
 
-    static let paper = color(0xF7F2E8, 0x17140F)
-    static let ink = color(0x1F1A14, 0xE9E1D2)
-    static let soft = color(0x6F6556, 0xA69C8A)
-    static let faint = color(0xBDB3A1, 0x4F473B)
-    static let accent = color(0xA33B2B, 0xE07A62)
-    static let red = color(0xA33B2B, 0xE07A62)
-    static let green = color(0x4E7A5A, 0x7FB08A)
-    static let wash = color(0xEFE7D8, 0x231E17)
-    static let pending = color(0xF3E3D6, 0x2E1F19)
+    static let paper = color(0xFAF7F3, 0x191714)
+    static let sheet = color(0xF3F0E9, 0x22201D)
+    static let ink = color(0x221D18, 0xE9E6DF)
+    static let soft = color(0x69625B, 0xB9B5AE)
+    static let faint = color(0xC2BDB5, 0x484440)
+    static let rule = color(0xE1DDD7, 0x302D2A)
+    static let accent = color(0xA83825, 0xF5A083)
+    static let red = accent
+    static let green = color(0x56805F, 0x86B990)
+    static let wash = sheet
+    static let mark = color(0xFCE4D9, 0x3D241E)
+    static let selection = color(0xE6E0D6, 0x3A3631)
 
     static let size: CGFloat = 20
     static let column: CGFloat = 620
@@ -104,6 +107,19 @@ final class QuillTextView: NSTextView {
         didSet { if gutter != oldValue { setFrameSize(frame.size) } }
     }
     private(set) var review = Review()
+    var focused: Int? {
+        didSet {
+            guard focused != oldValue else { return }
+            for id in [focused, oldValue].compactMap({ $0 }) {
+                if let h = review.hunk(id) { restyle(h.range) }
+            }
+            needsDisplay = true
+        }
+    }
+    private var presence: CALayer?
+    private var growing: Set<Int> = []
+    private var warming = false
+    private var sweeper: Timer?
     private var activeLines = NSRange(location: 0, length: 0)
     private var pending: [NSRange] = []
     private var crossed: [Hunk] = []
@@ -157,7 +173,7 @@ final class QuillTextView: NSTextView {
         font = Theme.body
         defaultParagraphStyle = Theme.bodyParagraph
         typingAttributes = Theme.bodyAttributes
-        selectedTextAttributes = [.backgroundColor: Theme.accent.withAlphaComponent(0.16)]
+        selectedTextAttributes = [.backgroundColor: Theme.selection]
         linkTextAttributes = [:]
         textContainer?.lineFragmentPadding = 0
         wantsLayer = true
@@ -304,7 +320,31 @@ final class QuillTextView: NSTextView {
             restyle(NSRange(location: 0, length: (string as NSString).length))
             undoManager?.removeAllActions()
             onReview?()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.warm() }
         }
+    }
+
+    private func warm() {
+        guard window != nil, review.isEmpty, let tlm = textLayoutManager, let tcs = textContentStorage,
+              let fragment = tlm.textLayoutFragment(for: CGPoint(x: 0, y: max(0, visibleRect.minY - textContainerOrigin.y)))
+        else { return }
+        let text = string as NSString
+        let p = paragraph(at: tcs.offset(from: tcs.documentRange.location, to: fragment.rangeInElement.location))
+        guard p.length > 1 else { return }
+        let at = NSMaxRange(p) - (text.character(at: NSMaxRange(p) - 1) == 10 ? 1 : 0)
+        let callbacks = (onReview, onEdit, onResolve)
+        let selection = selectedRanges
+        (onReview, onEdit, onResolve) = (nil, nil, nil)
+        warming = true
+        undoManager?.disableUndoRegistration()
+        replace(NSRange(location: at, length: 0), with: "\u{200B}", by: .agent(turn: 0, flags: []))
+        CATransaction.flush()
+        replace(NSRange(location: at, length: 1), with: "", by: .restore)
+        setReview(Review())
+        undoManager?.enableUndoRegistration()
+        warming = false
+        selectedRanges = selection
+        (onReview, onEdit, onResolve) = callbacks
     }
 
     func textRange(_ r: NSRange) -> NSTextRange? {
@@ -374,8 +414,68 @@ final class QuillTextView: NSTextView {
 
     func setReview(_ next: Review) {
         pending += review.hunks.map(\.range) + next.hunks.map(\.range)
+        let arrived = next.hunks.filter { h in review.hunk(h.id) == nil }
         review = next
         flush()
+        grow(arrived)
+    }
+
+    private var still: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    private func grow(_ hunks: [Hunk]) {
+        guard !still, !warming, window != nil else { return }
+        for h in hunks {
+            guard let bar = bar(h), bar.intersects(visibleRect) else { continue }
+            growing.insert(h.id)
+            let l = CALayer()
+            l.backgroundColor = Theme.accent.withAlphaComponent(0.55).cgColor
+            l.cornerRadius = 1
+            l.anchorPoint = CGPoint(x: 0.5, y: 0)
+            l.frame = bar
+            fx.addSublayer(l)
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.growing.remove(h.id)
+                    self?.setNeedsDisplay(bar.insetBy(dx: -2, dy: -2))
+                    l.removeFromSuperlayer()
+                }
+            }
+            let a = CABasicAnimation(keyPath: "transform.scale.y")
+            a.fromValue = 0
+            a.toValue = 1
+            a.duration = 0.32
+            a.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+            l.add(a, forKey: "grow")
+            CATransaction.commit()
+        }
+        setNeedsDisplay(visibleRect)
+    }
+
+    private func crossfade(_ hunks: [Hunk], _ change: () -> Void) {
+        let area = hunks.reduce(CGRect.null) { area, h in
+            let p = paragraph(at: h.range.location)
+            return segments(p).reduce(area) { $0.union($1) }.union(bar(h) ?? .null)
+        }
+        let shown = CGRect(x: textContainerOrigin.x, y: area.minY - 4, width: bounds.width - textContainerOrigin.x, height: area.height + 8).intersection(visibleRect)
+        guard !still, !area.isNull, !shown.isEmpty, let rep = bitmapImageRepForCachingDisplay(in: shown) else { return change() }
+        cacheDisplay(in: shown, to: rep)
+        change()
+        let l = CALayer()
+        l.contents = rep.cgImage
+        l.contentsScale = window?.backingScaleFactor ?? 2
+        l.frame = shown
+        fx.addSublayer(l)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { l.removeFromSuperlayer() }
+        let a = CABasicAnimation(keyPath: "opacity")
+        a.fromValue = 1
+        a.toValue = 0
+        a.duration = 0.2
+        a.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+        l.opacity = 0
+        l.add(a, forKey: "fade")
+        CATransaction.commit()
     }
 
     func keep(_ hunks: [Hunk]) {
@@ -383,7 +483,7 @@ final class QuillTextView: NSTextView {
         var next = review
         let gone = hunks.compactMap { next.remove($0.id) }
         guard !gone.isEmpty else { return }
-        setReview(next)
+        crossfade(gone) { setReview(next) }
         onResolve?(gone.filter { !$0.touched }, .kept)
         onResolve?(gone.filter(\.touched), .rewritten)
         record([], name: gone.count == 1 ? "Keep Change" : "Keep Changes", turn: 0, before: before, after: review, back: true)
@@ -394,9 +494,12 @@ final class QuillTextView: NSTextView {
         var next = review
         let gone = hunks.compactMap { next.remove($0.id) }
         guard !gone.isEmpty else { return }
-        setReview(next)
-        onResolve?(gone, .reverted)
-        let inverse = commit(gone.map { Change(range: $0.range, text: $0.old) }, by: .other)
+        var inverse: [Change] = []
+        crossfade(gone) {
+            setReview(next)
+            onResolve?(gone, .reverted)
+            inverse = commit(gone.map { Change(range: $0.range, text: $0.old) }, by: .other)
+        }
         record(inverse, name: gone.count == 1 ? "Revert Change" : "Revert Changes", turn: 0, before: before, after: review, back: true)
     }
 
@@ -520,12 +623,13 @@ final class QuillTextView: NSTextView {
         for h in review.hunks where h.range.length > 0 {
             let overlap = NSIntersectionRange(h.range, full)
             guard overlap.length > 0 else { continue }
-            let flagged = !h.flags.isEmpty
-            storage.addAttributes([
-                .backgroundColor: Theme.pending,
-                .underlineStyle: (flagged ? NSUnderlineStyle([.single, .patternDot]) : .single).rawValue,
-                .underlineColor: Theme.accent.withAlphaComponent(flagged ? 0.95 : 0.45),
-            ], range: overlap)
+            let on = h.id == focused
+            var look: [NSAttributedString.Key: Any] = [
+                .underlineStyle: (h.flags.isEmpty ? NSUnderlineStyle.single : [.single, .patternDot]).rawValue,
+                .underlineColor: Theme.accent.withAlphaComponent(on || !h.flags.isEmpty ? 1 : 0.45),
+            ]
+            if on { look[.backgroundColor] = Theme.mark }
+            storage.addAttributes(look, range: overlap)
         }
         for (r, attributes) in marks {
             let overlap = NSIntersectionRange(r, full)
@@ -550,10 +654,103 @@ final class QuillTextView: NSTextView {
             }
             return true
         }
-        Theme.accent.setFill()
-        for h in review.hunks where h.range.length == 0 {
-            guard let seg = segments(NSRange(location: h.range.location, length: 0)).first, seg.intersects(rect.insetBy(dx: 0, dy: -40)) else { continue }
-            NSBezierPath(roundedRect: NSRect(x: seg.minX - 1, y: seg.minY + 6, width: 2, height: max(seg.height - 12, 12)), xRadius: 1, yRadius: 1).fill()
+        for h in review.hunks where !growing.contains(h.id) && !warming {
+            guard let bar = bar(h), bar.intersects(rect) else { continue }
+            Theme.accent.withAlphaComponent(h.id == focused ? 1 : 0.55).setFill()
+            NSBezierPath(roundedRect: bar, xRadius: 1, yRadius: 1).fill()
+        }
+    }
+
+    func bar(_ h: Hunk) -> CGRect? {
+        let rects = segments(h.range.length > 0 ? h.range : NSRange(location: h.range.location, length: 0))
+        guard let first = rects.first, let last = rects.last else { return nil }
+        return CGRect(x: textContainerOrigin.x + 14, y: first.minY + 5, width: 2, height: max(last.maxY - first.minY - 10, 14))
+    }
+
+    func paragraph(at location: Int) -> NSRange {
+        let text = string as NSString
+        return text.paragraphRange(for: NSRange(location: min(location, text.length), length: 0))
+    }
+
+    func present(_ r: NSRange?) {
+        sweeper?.invalidate()
+        sweeper = nil
+        guard let r, let first = segments(NSRange(location: r.location, length: 0)).first else {
+            guard let presence else { return }
+            self.presence = nil
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(0.25)
+            CATransaction.setCompletionBlock { presence.removeFromSuperlayer() }
+            presence.opacity = 0
+            CATransaction.commit()
+            return
+        }
+        let end = segments(NSRange(location: max(r.location, NSMaxRange(r) - 1), length: 0)).first ?? first
+        let frame = CGRect(x: textContainerOrigin.x + 13, y: first.minY + 4, width: 4, height: max(end.maxY - first.minY - 8, 16))
+        let layer = presence ?? {
+            let l = CALayer()
+            l.backgroundColor = Theme.accent.withAlphaComponent(0.85).cgColor
+            l.cornerRadius = 2
+            l.frame = frame
+            l.opacity = 0
+            fx.addSublayer(l)
+            presence = l
+            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                let breathe = CABasicAnimation(keyPath: "opacity")
+                breathe.fromValue = 0.4
+                breathe.toValue = 1
+                breathe.duration = 0.8
+                breathe.autoreverses = true
+                breathe.repeatCount = .infinity
+                breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                l.add(breathe, forKey: "breathe")
+            }
+            return l
+        }()
+        layer.opacity = 0.8
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if !reduce, layer.frame != frame {
+            for key in ["position", "bounds.size"] {
+                let spring = CASpringAnimation(perceptualDuration: 0.45, bounce: 0)
+                spring.keyPath = key
+                spring.fromValue = key == "position" ? NSValue(point: layer.presentation()?.position ?? layer.position)
+                    : NSValue(size: layer.presentation()?.bounds.size ?? layer.bounds.size)
+                layer.add(spring, forKey: key)
+            }
+        }
+        layer.frame = frame
+        CATransaction.commit()
+    }
+
+    func sweep() {
+        guard sweeper == nil else { return }
+        let text = string as NSString
+        guard text.length > 0, let tlm = textLayoutManager, let tcs = textContentStorage else { return }
+        let visible = visibleRect
+        var paragraphs: [NSRange] = []
+        tlm.enumerateTextLayoutFragments(from: tlm.textLayoutFragment(for: CGPoint(x: 0, y: max(0, visible.minY - textContainerOrigin.y)))?.rangeInElement.location ?? tlm.documentRange.location,
+                                         options: [.ensuresLayout]) { fragment in
+            let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textContainerOrigin.y)
+            if frame.minY > visible.maxY { return false }
+            let at = tcs.offset(from: tcs.documentRange.location, to: fragment.rangeInElement.location)
+            let p = paragraph(at: at)
+            if !text.substring(with: p).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, paragraphs.last != p { paragraphs.append(p) }
+            return true
+        }
+        guard !paragraphs.isEmpty else { return }
+        var i = 0
+        present(paragraphs[0])
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        sweeper = Timer.scheduledTimer(withTimeInterval: 0.9, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                i = (i + 1) % paragraphs.count
+                let timer = self.sweeper
+                self.present(paragraphs[i])
+                self.sweeper = timer
+            }
         }
     }
 

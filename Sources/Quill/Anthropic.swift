@@ -145,6 +145,7 @@ final class AnthropicAgent: Agent {
                     tools[index] = tool
                     if tool.name == "edit_document", let prefix, let edits = Self.edits(prefix), edits.count > proposed,
                        let next = replacing(edits, in: base) {
+                        if let last = edits.last { events(.focus(last.find)) }
                         proposed = edits.count
                         events(.proposed(next))
                     }

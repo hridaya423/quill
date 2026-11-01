@@ -81,11 +81,11 @@ struct Pill: View {
             case .thinking(let activity, let words):
                 thinking(activity, words)
             case .applying(let n):
-                label(n == 1 ? "Editing · 1 change" : "Editing · \(n) changes")
+                thinking(n == 1 ? "Writing 1 change" : "Writing \(n) changes", nil)
             case .said(let text):
                 said(text)
             case .done(let n):
-                done(n).task(id: shown) { await dismiss(after: 3.4) }
+                if pending > 0 { reviewRow } else { done(n).task(id: shown) { await dismiss(after: 2.4) } }
             case .failed(let message):
                 failed(message)
             }
@@ -119,29 +119,50 @@ struct Pill: View {
     }
 
     private var hint: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 16) {
             HStack(spacing: 6) { Keycap(Prefs.talkKey.label); Text("hold to talk") }
-            Text("·").foregroundStyle(Color.faint)
             HStack(spacing: 6) { Keycap("⌘K"); Text("type") }
         }
         .font(.system(size: 12))
         .foregroundStyle(Color.soft)
     }
 
+    private var index: Int? {
+        ws.review.hunks.firstIndex { $0.id == ws.focusID }
+    }
+
     private var reviewRow: some View {
-        HStack(spacing: 12) {
-            Circle().fill(Color.accentInk).frame(width: 7, height: 7)
-            Text(pending == 1 ? "1 change to review" : "\(pending) changes to review")
-                .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
+        HStack(spacing: 14) {
+            Text(pending == 1 ? "1 change" : "\(pending) changes")
+                .font(.serif(17)).foregroundStyle(Color.ink)
                 .contentTransition(.numericText())
-            Text("·").foregroundStyle(Color.faint)
-            Button { ws.keep() } label: { HStack(spacing: 5) { Text("Keep all"); Keycap("⇧⌘↩") } }
-                .buttonStyle(.plain).foregroundStyle(Color.ink)
-            Button { ws.revert() } label: { HStack(spacing: 5) { Text("Revert all"); Keycap("⇧⌘⌫") } }
+            if pending > 1 { HStack(spacing: 0) {
+                Button { ws.step(false) } label: { Image(systemName: "chevron.left").frame(width: 22, height: 22).contentShape(Rectangle()) }
+                    .help("Previous change (⌘[)")
+                Text(index.map { "\($0 + 1) of \(pending)" } ?? "")
+                    .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(Color.soft)
+                    .frame(minWidth: index == nil ? 0 : 40)
+                Button { ws.step(true) } label: { Image(systemName: "chevron.right").frame(width: 22, height: 22).contentShape(Rectangle()) }
+                    .help("Next change (⌘])")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Color.soft)
+            .buttonStyle(.plain) }
+            Rectangle().fill(Color(nsColor: Theme.rule)).frame(width: 1, height: 16)
+            Button("Revert all") { ws.revert() }
                 .buttonStyle(.plain).foregroundStyle(Color.soft)
+                .help("Put back every change (⇧⌘⌫)")
+            Button { ws.keep() } label: {
+                Text("Keep all").foregroundStyle(Color(nsColor: Theme.paper))
+                    .padding(.horizontal, 11).padding(.vertical, 4)
+                    .background(Capsule().fill(Color.ink))
+            }
+            .buttonStyle(Press())
+            .help("Keep every change (⇧⌘↩)")
         }
-        .font(.system(size: 12.5))
+        .font(.system(size: 12.5, weight: .medium))
         .fixedSize()
+        .animation(morph, value: index)
     }
 
     private func listening(_ text: String) -> some View {
@@ -158,45 +179,34 @@ struct Pill: View {
         .fixedSize()
     }
 
-    private func thinking(_ activity: String, _ words: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("“\(words)”")
-                .font(.serif(15).italic())
-                .foregroundStyle(Color.soft)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 420, alignment: .leading)
-            HStack(spacing: 8) {
-                Orb()
-                Shimmer(text: activity)
+    private func thinking(_ activity: String, _ words: String?) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let words {
+                Text(words)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.soft)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Presence().alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
+                Text(ws.live.isEmpty ? activity : ws.live)
+                    .font(.serif(17).italic(ws.live.isEmpty))
+                    .foregroundStyle(ws.live.isEmpty ? Color.soft : Color.ink)
+                    .lineLimit(3)
+                    .truncationMode(.head)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.12), value: ws.live)
             }
         }
-        .fixedSize()
-    }
-
-    private func label(_ text: String) -> some View {
-        HStack(spacing: 9) {
-            Orb()
-            Text(text).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
-        }
-        .fixedSize()
+        .frame(width: 440, alignment: .leading)
     }
 
     private func done(_ n: Int) -> some View {
-        HStack(spacing: 10) {
-            Circle().fill(n == 0 ? Color.soft : Color.accentInk).frame(width: 7, height: 7)
-            Text(n == 0 ? "Nothing to change" : n == 1 ? "1 change" : "\(n) changes")
-                .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
-            if pending > 0 {
-                Text("·").foregroundStyle(Color.faint)
-                HStack(spacing: 5) { Keycap("⌘↩"); Text("keep") }
-                HStack(spacing: 5) { Keycap("⌘⌫"); Text("revert") }
-                HStack(spacing: 5) { Keycap("⌘Z"); Text("undo") }
-            }
-        }
-        .font(.system(size: 12))
-        .foregroundStyle(Color.soft)
-        .fixedSize()
+        Text(n == 0 ? "Nothing to change" : n == 1 ? "1 change" : "\(n) changes")
+            .font(.serif(17)).foregroundStyle(Color.soft)
+            .fixedSize()
     }
 
     private func failed(_ message: String) -> some View {
@@ -353,49 +363,17 @@ struct Waveform: View {
     }
 }
 
-struct Orb: View {
+struct Presence: View {
     @Environment(\.accessibilityReduceMotion) private var still
     var body: some View {
         TimelineView(.animation(paused: still)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let s = 0.75 + 0.25 * (0.5 + 0.5 * sin(t * 4.2))
-            Circle()
+            Capsule()
                 .fill(Color.accentInk)
-                .frame(width: 7, height: 7)
-                .scaleEffect(s)
-                .opacity(0.55 + 0.45 * s)
+                .frame(width: 3, height: 14)
+                .opacity(still ? 0.8 : 0.7 + 0.3 * sin(t * .pi / 0.8))
         }
-        .frame(width: 8, height: 8)
-    }
-}
-
-struct Shimmer: View {
-    var text: String
-    @Environment(\.accessibilityReduceMotion) private var still
-    var body: some View {
-        if still {
-            Text(text).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
-        } else {
-            shimmer
-        }
-    }
-
-    private var shimmer: some View {
-        TimelineView(.animation) { context in
-            let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
-            Text(text)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Color.soft)
-                .overlay {
-                    GeometryReader { g in
-                        LinearGradient(colors: [.clear, Color.ink, .clear], startPoint: .leading, endPoint: .trailing)
-                            .frame(width: g.size.width * 0.5)
-                            .offset(x: (t * 1.8 - 0.4) * g.size.width)
-                    }
-                    .mask(Text(text).font(.system(size: 13, weight: .medium)))
-                }
-                .contentTransition(.opacity)
-        }
+        .frame(width: 3, height: 14)
     }
 }
 
@@ -450,47 +428,56 @@ struct NoteCard: View {
     }
 }
 
-struct ChangeCard: View {
+struct Gloss: View {
     var hunk: Hunk
+    var width: CGFloat?
     var keep: () -> Void
     var revert: () -> Void
     var hover: (Bool) -> Void
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var still
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             if hunk.old.isEmpty {
-                Text("Added by Quill").font(.system(size: 11, weight: .medium)).foregroundStyle(Color.soft)
+                Text("Added").font(.serif(14).italic()).foregroundStyle(Color.soft)
             } else {
                 Text(hunk.old)
                     .font(.serif(15))
-                    .strikethrough(true, color: Color.redInk.opacity(0.7))
+                    .strikethrough(true, color: Color.accentInk.opacity(0.75))
                     .foregroundStyle(Color.soft)
-                    .lineLimit(3)
+                    .lineSpacing(1)
+                    .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(hunk.flags, id: \.self) { flag in
-                Label(flag, systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.redInk)
+                Text(flag).font(.serif(13.5).italic()).foregroundStyle(Color.accentInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 12) {
-                Button(action: keep) { HStack(spacing: 5) { Text("Keep"); Keycap("⌘↩") } }
-                    .foregroundStyle(Color.ink)
-                Button(action: revert) { HStack(spacing: 5) { Text("Revert"); Keycap("⌘⌫") } }
-                    .foregroundStyle(Color.soft)
+            HStack(spacing: 14) {
+                Button("Keep", action: keep).foregroundStyle(Color.ink).help("Keep this change (⌘↩)")
+                Button("Revert", action: revert).foregroundStyle(Color.soft).help("Put the old words back (⌘⌫)")
             }
             .font(.system(size: 12, weight: .medium))
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .frame(maxWidth: 360, alignment: .leading)
-        .fixedSize(horizontal: true, vertical: true)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(nsColor: Theme.paper))
-            .shadow(color: .black.opacity(0.14), radius: 12, y: 5))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.faint.opacity(0.7), lineWidth: 0.5))
-        .padding(12)
+        .padding(.leading, 12)
+        .padding(.vertical, width == nil ? 10 : 2)
+        .padding(.trailing, width == nil ? 12 : 0)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Color.accentInk).frame(width: 1).padding(.vertical, width == nil ? 10 : 2)
+        }
+        .background {
+            if width == nil {
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: Theme.sheet))
+                    .shadow(color: .black.opacity(0.10), radius: 10, y: 4)
+            }
+        }
+        .frame(width: width ?? 300, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .opacity(shown ? 1 : 0)
+        .offset(y: shown || still ? 0 : 4)
+        .onAppear { withAnimation(still ? .easeOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 1)) { shown = true } }
         .onHover(perform: hover)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(hunk.old.isEmpty ? "Added text" : "Replaced: \(hunk.old)")

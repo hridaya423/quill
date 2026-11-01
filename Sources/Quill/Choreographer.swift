@@ -49,7 +49,6 @@ extension QuillTextView {
 
 @MainActor private let easeOut = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
 @MainActor private let easeInOut = CAMediaTimingFunction(controlPoints: 0.77, 0, 0.175, 1)
-@MainActor private let drift = CAMediaTimingFunction(controlPoints: 0.45, 0, 0.85, 0.55)
 
 @MainActor
 final class Choreographer {
@@ -122,32 +121,67 @@ final class Choreographer {
     private func run() async {
         guard let first = changes.first, await reveal(first.range) else { return }
         let cuts = changes.filter { $0.range.length > 0 }
+        var hidden: [CALayer] = []
         if !cuts.isEmpty {
-            var strikes: [CALayer] = []
-            for c in cuts {
-                view.mark(c.range, [.foregroundColor: Theme.red])
-                strikes += strike(view.segments(c.range))
-            }
+            let strikes = cuts.flatMap { strike(view.segments($0.range)) }
             layers += strikes
             guard await pause(0.24) else { return }
+            var shots: [(CGImage, CGRect)] = []
+            var struck: [CGRect] = []
             for c in cuts {
                 let rects = view.segments(c.range)
                 if let bounds = rects.reduce(nil, { ($0 ?? $1).union($1) as CGRect? }) {
                     let frame = bounds.insetBy(dx: -2, dy: -2).integral
-                    if let image = snapshot(frame) { dust(image, frame) }
+                    if let image = snapshot(frame, clip: rects) { shots.append((image, frame)) }
                 }
-                view.mark(c.range, [.foregroundColor: NSColor.clear])
+                struck += rects
             }
-            for s in strikes { fadeAway(s, duration: 0.2) }
+            cover(struck, &hidden)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for s in strikes { s.removeFromSuperlayer() }
+            for shot in shots { lift(shot.0, shot.1) }
+            CATransaction.commit()
             guard await pause(0.3) else { return }
         }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         replaceAll()
-        guard let fresh, fresh.contains(where: { $0.length > 0 }) else {
+        for layer in hidden { layer.removeFromSuperlayer() }
+        let typed = (fresh ?? []).filter { $0.length > 0 }
+        var pools = typed.map { _ in [CALayer]() }
+        for (i, r) in typed.enumerated() { cover(view.segments(r), &pools[i]) }
+        CATransaction.commit()
+        guard !typed.isEmpty else {
             _ = await pause(0.12)
             return
         }
-        for r in fresh where r.length > 0 { view.mark(r, [.foregroundColor: NSColor.clear]) }
-        _ = await type(fresh.filter { $0.length > 0 })
+        _ = await type(typed, &pools)
+        for mask in pools.joined() { mask.removeFromSuperlayer() }
+    }
+
+    private var paper: CGColor {
+        var color = Theme.paper.cgColor
+        view.effectiveAppearance.performAsCurrentDrawingAppearance { color = Theme.paper.cgColor }
+        return color
+    }
+
+    private func cover(_ rects: [CGRect], _ pool: inout [CALayer]) {
+        let paper = paper
+        while pool.count < rects.count {
+            let mask = CALayer()
+            mask.backgroundColor = paper
+            view.fx.insertSublayer(mask, at: 0)
+            pool.append(mask)
+            layers.append(mask)
+        }
+        for (i, mask) in pool.enumerated() {
+            mask.isHidden = i >= rects.count
+            if i < rects.count {
+                let r = rects[i]
+                mask.frame = CGRect(x: r.minX, y: r.minY, width: r.width + 1, height: r.height)
+            }
+        }
     }
 
     private func reveal(_ r: NSRange) async -> Bool {
@@ -191,89 +225,66 @@ final class Choreographer {
         }
     }
 
-    private func snapshot(_ rect: CGRect) -> CGImage? {
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
-        let fx = view.fx.isHidden
-        view.fx.isHidden = true
-        view.drawsBackground = false
-        view.cacheDisplay(in: rect, to: rep)
-        view.drawsBackground = true
-        view.fx.isHidden = fx
-        return rep.cgImage
-    }
-
-    private func dust(_ image: CGImage, _ frame: CGRect) {
-        let w = image.width, h = image.height
+    private func snapshot(_ rect: CGRect, clip: [CGRect]) -> CGImage? {
+        guard let tlm = view.textLayoutManager else { return nil }
+        let scale = view.window?.backingScaleFactor ?? 2
+        let w = Int(rect.width * scale), h = Int(rect.height * scale)
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return }
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
-        guard let data = ctx.data?.assumingMemoryBound(to: UInt8.self) else { return }
-
-        let tile = max(2.0, (frame.width * frame.height / 1600).squareRoot())
-        let cols = Int(ceil(frame.width / tile)), rows = Int(ceil(frame.height / tile))
-        let sx = CGFloat(w) / frame.width, sy = CGFloat(h) / frame.height
-        let container = CALayer()
-        container.frame = frame
-        view.fx.addSublayer(container)
-        let scale = view.window?.backingScaleFactor ?? 2
-        let now = CACurrentMediaTime()
-        var longest = 0.0
-
-        for row in 0..<rows {
-            for col in 0..<cols {
-                let px = Int((CGFloat(col) + 0.5) * tile * sx), py = Int((CGFloat(row) + 0.5) * tile * sy)
-                var ink = false
-                for dy in stride(from: -Int(tile * sy / 2), through: Int(tile * sy / 2), by: 1) {
-                    for dx in stride(from: -Int(tile * sx / 2), through: Int(tile * sx / 2), by: 1) {
-                        let x = min(w - 1, max(0, px + dx)), y = min(h - 1, max(0, py + dy))
-                        if data[(y * w + x) * 4 + 3] > 24 { ink = true; break }
-                    }
-                    if ink { break }
-                }
-                guard ink else { continue }
-
-                let piece = CALayer()
-                piece.contents = image
-                piece.contentsScale = scale
-                let cell = CGRect(x: CGFloat(col) * tile, y: CGFloat(row) * tile, width: tile, height: tile)
-                piece.frame = cell
-                piece.contentsRect = CGRect(x: cell.minX / frame.width, y: cell.minY / frame.height,
-                                            width: tile / frame.width, height: tile / frame.height)
-                container.addSublayer(piece)
-
-                let progress = Double(cell.midX / max(frame.width, 1))
-                let delay = progress * 0.22 + Double.random(in: 0...0.06)
-                let duration = Double.random(in: 0.5...0.85)
-                longest = max(longest, delay + duration)
-
-                let move = CABasicAnimation(keyPath: "position")
-                move.fromValue = NSValue(point: CGPoint(x: cell.midX, y: cell.midY))
-                move.toValue = NSValue(point: CGPoint(x: cell.midX + .random(in: 10...46), y: cell.midY - .random(in: 6...34)))
-                let fade = CABasicAnimation(keyPath: "opacity")
-                fade.fromValue = 1
-                fade.toValue = 0
-                let shrink = CABasicAnimation(keyPath: "transform.scale")
-                shrink.fromValue = 1
-                shrink.toValue = Double.random(in: 0.2...0.6)
-                let group = CAAnimationGroup()
-                group.animations = [move, fade, shrink]
-                group.duration = duration
-                group.beginTime = now + delay
-                group.timingFunction = drift
-                group.fillMode = .both
-                group.isRemovedOnCompletion = false
-                piece.add(group, forKey: "dust")
+        else { return nil }
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: scale, y: -scale)
+        ctx.translateBy(x: -rect.minX, y: -rect.minY)
+        ctx.clip(to: clip.map { $0.insetBy(dx: -1, dy: 0) })
+        let origin = view.textContainerOrigin
+        let start = tlm.textLayoutFragment(for: CGPoint(x: 0, y: max(0, rect.minY - origin.y)))?.rangeInElement.location ?? tlm.documentRange.location
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            tlm.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+                let frame = fragment.layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y)
+                if frame.minY > rect.maxY { return false }
+                fragment.draw(at: frame.origin, in: ctx)
+                return true
+            }
+            ctx.setStrokeColor(Theme.red.cgColor)
+            ctx.setLineWidth(1.6)
+            ctx.setLineCap(.round)
+            for r in clip {
+                let y = r.minY + r.height * 0.56
+                ctx.strokeLineSegments(between: [CGPoint(x: r.minX, y: y), CGPoint(x: r.maxX, y: y)])
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + longest + 0.05) {
-            container.removeFromSuperlayer()
-        }
+        NSGraphicsContext.restoreGraphicsState()
+        return ctx.makeImage()
     }
 
-    private func type(_ ranges: [NSRange]) async -> Bool {
+    private func lift(_ image: CGImage, _ frame: CGRect) {
+        let layer = CALayer()
+        layer.contents = image
+        layer.contentsScale = view.window?.backingScaleFactor ?? 2
+        layer.frame = frame
+        view.fx.addSublayer(layer)
+        layers.append(layer)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { layer.removeFromSuperlayer() }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        let rise = CABasicAnimation(keyPath: "position.y")
+        rise.byValue = -6
+        let group = CAAnimationGroup()
+        group.animations = [fade, rise]
+        group.duration = 0.32
+        group.timingFunction = easeOut
+        layer.opacity = 0
+        layer.add(group, forKey: "lift")
+        CATransaction.commit()
+    }
+
+    private func type(_ ranges: [NSRange], _ pools: inout [[CALayer]]) async -> Bool {
         let text = view.string as NSString
         let longest = ranges.map(\.length).max() ?? 0
         let total = min(0.8, max(0.16, Double(longest) * 0.016))
@@ -299,12 +310,12 @@ final class Choreographer {
                 if target > shown[i] { shown[i] = target; moved = true }
             }
             guard moved else { continue }
-            view.clearMarks(.foregroundColor)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             for (i, r) in ranges.enumerated() {
-                if shown[i] < r.length { view.mark(NSRange(location: r.location + shown[i], length: r.length - shown[i]), [.foregroundColor: NSColor.clear]) }
-                if i < carets.count, let seg = view.segments(NSRange(location: r.location + shown[i], length: 0)).first {
+                let rest = NSRange(location: r.location + shown[i], length: r.length - shown[i])
+                cover(rest.length > 0 ? view.segments(rest) : [], &pools[i])
+                if i < carets.count, let seg = view.segments(NSRange(location: rest.location, length: 0)).first {
                     carets[i].frame = CGRect(x: seg.minX, y: seg.minY + 5, width: 2, height: max(seg.height - 10, 14))
                 }
             }

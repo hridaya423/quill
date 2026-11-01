@@ -102,6 +102,11 @@ enum Prefs {
         set { store.set(newValue, forKey: "distilledThrough") }
     }
 
+    static var pane: String? {
+        get { store.string(forKey: "settingsPane") }
+        set { store.set(newValue, forKey: "settingsPane") }
+    }
+
     static var talkKey: TalkKey {
         get { TalkKey(rawValue: store.string(forKey: "talkKey") ?? "") ?? .rightOption }
         set { store.set(newValue.rawValue, forKey: "talkKey") }

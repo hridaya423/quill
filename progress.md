@@ -1,5 +1,25 @@
 # Progress
 
+## Interaction and visual redesign (2026-11-01, in progress)
+Brief: redesign the interaction and visual layer to the standard of great Mac software, without adding features. Spec: `docs/design/review.md`.
+
+Done, with evidence:
+- [x] Change primitive: hairline rubric underline, 2 pt gutter bar, struck old words in a right-margin gloss that fits the available margin (boxed below the line only under 150 pt). Hover card and stray deletion ticks removed. ⌘↩, ⌘⌫, one undo per request kept (LoopTests pass). Snapshots: build/snap5/review-*.png.
+- [x] Presence: a breathing rubric mark in the gutter sweeps visible paragraphs while reading, settles on the paragraph named by the agent (`.focus` from ACP permission and API edits), fades when done. The pill streams the reply in Garamond (`ws.live`). Orb and shimmer deleted.
+- [x] Review pill: `N changes ‹ i of N › Revert all  Keep all`, shortcuts in tooltips. Stepper hidden for one change.
+- [x] Badge menu: three recommended models (`AgentSpec.picks`, else first three), More Models…, answer mode, Co-writer submenu with marks, Settings…. Menu-bar Model submenu matches.
+- [x] Settings window: `NSTabViewController` toolbar tabs General, Co-writers, Voice, Shortcuts (`Settings.swift`). Remembers the last pane. Marks in `Brand/mark-*.svg` (sources and terms in `Brand/CREDITS.txt`; the Codex mark is not from OpenAI and must be replaced before release). Snapshots: build/snap5/settings-*.png.
+- [x] Palette: OKLCH scales, APCA-checked by `scripts/palette.py` (exit 1 on failure). Body Lc 99.1 light / 90.7 dark; secondary 75.5 / 61.5; accent 76.5 / 61.5.
+- [x] Motion: arrival is strike (0.16 s), lift-and-fade of the struck words (0.32 s, one layer), type-in behind masks; gutter bar grows 0.32 s; keep and revert cross-fade 0.2 s. All layer-driven: no text attribute changes per frame. Reduced Motion settles instantly.
+- [x] Frame budget: `scripts/frames.sh` (release, CADisplayLink probe in `FrameTests`). Three consecutive runs: worst frame 8.3 ms in every phase (idle, presence sweep, presence move, arrival, keep, revert) on a 120 Hz display. Before the fixes arrival hit 34–131 ms.
+  - Causes found: recolouring text forced TextKit re-layout (27–36 ms commit); `drawsBackground` toggling for the dust snapshot redrew the view (16 ms); the dust's per-pixel scan ran on main; the first agent change in a text view costs about 18 ms to commit. Fixes: masks instead of attributes, snapshot from layout fragments, one lift layer instead of ~900 dust layers, and an invisible zero-width warm-up change 0.3 s after a note loads.
+
+Remaining:
+- Frame strips against the references (`build/refs`), states via `QUILL_STRIP=dir scripts/frames.sh`.
+- First-use test protocol (`docs/design/first-use-test.md`).
+- Live-app pass of Settings window and badge menu (blocked while the Mac is in use; no keystrokes sent).
+- /perfection pass over every state.
+
 ## Audit implementation (2026-11-01, in progress)
 Source: the harsh audit in this session. Phases, in order. Mark each done with evidence.
 

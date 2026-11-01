@@ -56,9 +56,11 @@ final class Workspace {
     var installed: [String: Bool] = [:]
     var remedy: (label: String, action: () -> Void)?
     var busy = false
+    var live = ""
+    var focusID: Int?
     var model: ModelChoice?
     var models: [ModelChoice] = []
-    @ObservationIgnored var showSettings: () -> Void = {}
+    @ObservationIgnored var showSettings: (Pane?) -> Void = { _ in }
     var hasKey = Keychain.anthropicKey?.isEmpty == false
     var mode: Mode {
         didSet { Prefs.mode = mode }
@@ -107,6 +109,13 @@ final class Workspace {
     }
 
     var spec: AgentSpec { AgentSpec.named(agentID) }
+
+    var recommended: [ModelChoice] {
+        var picks = spec.picks.compactMap { id in models.first { $0.id == id } }
+        if picks.isEmpty { picks = Array(models.prefix(3)) }
+        if let model, !picks.contains(model) { picks = Array(picks.prefix(2)) + [model] }
+        return picks
+    }
 
     func available(_ spec: AgentSpec) -> Bool? {
         guard let binary = spec.requires else { return hasKey }
@@ -388,6 +397,7 @@ final class Workspace {
         guard !changes.isEmpty else { return }
         if firstChangeAt == nil { firstChangeAt = CFAbsoluteTimeGetCurrent() }
         phase = .applying(editor.review.turn(turn).count + changes.count)
+        if let first = changes.first { editor.present(editor.paragraph(at: first.range.location)) }
         choreographer?.play(changes, as: .agent(turn: turn, flags: flags), turn: turn)
     }
 
@@ -418,7 +428,7 @@ final class Workspace {
                 guard let self else { return }
                 if let binary = spec.requires { installed[binary] = await Shell.find(binary) != nil }
                 if available(spec) == false {
-                    fail("\(spec.name) needs \(spec.need). Install it, or choose another co-writer.", remedy: ("Choose…", { [weak self] in self?.showSettings() }))
+                    fail("\(spec.name) needs \(spec.need). Install it, or choose another co-writer.", remedy: ("Choose…", { [weak self] in self?.showSettings(.cowriters) }))
                 } else {
                     ask(words, mode: override)
                 }
@@ -453,10 +463,12 @@ final class Workspace {
         tagged = nil
         let voice = keeper.notes
         reply = ""
+        live = ""
         margin = []
+        if sel.length > 0 { editor.present(editor.paragraph(at: sel.location)) } else { editor.sweep() }
         turnStarted = CFAbsoluteTimeGetCurrent()
         firstChangeAt = nil
-        phase = .thinking("Reading", words: words)
+        phase = .thinking(sel.length > 0 ? "Reading the selection" : "Reading the note", words: words)
         let agent = agent
         Task {
             var failure: String?
@@ -474,6 +486,9 @@ final class Workspace {
                             if case .thinking(_, let w) = self.phase { self.phase = .thinking(a, words: w) }
                         case .text(let t):
                             self.reply += t
+                            self.live = self.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                        case .focus(let passage):
+                            self.focus(passage)
                         case .proposed(let next):
                             try? next.write(to: file, atomically: true, encoding: .utf8)
                             self.reconcileDesk()
@@ -510,6 +525,7 @@ final class Workspace {
         }
         busy = false
         deskFile = nil
+        editor?.present(nil)
         flushSave()
         let latency = firstChangeAt.map { $0 - turnStarted }
         Log.turn(words: words, agent: agentID, total: CFAbsoluteTimeGetCurrent() - turnStarted, firstChange: latency)
@@ -538,6 +554,16 @@ final class Workspace {
         let summary = said.isEmpty ? (pending == 0 ? "Nothing to change." : pending == 1 ? "1 change." : "\(pending) changes.") : said
         transcript[url, default: []].append(Line(words: words, reply: summary))
         phase = said.isEmpty ? .done(pending) : .said(said)
+    }
+
+    private func focus(_ passage: String) {
+        guard let editor else { return }
+        let doc = editor.string as NSString
+        var r = doc.range(of: passage)
+        if r.location == NSNotFound, let line = passage.split(separator: "\n").first(where: { $0.count > 12 }) { r = doc.range(of: String(line)) }
+        guard r.location != NSNotFound else { return }
+        editor.present(editor.paragraph(at: r.location))
+        if case .thinking(_, let w) = phase { phase = .thinking("Editing here", words: w) }
     }
 
     private func retryPrompt(_ tells: [Tell], canEditFiles: Bool) -> String {
@@ -626,6 +652,7 @@ final class Workspace {
         choreographer?.land()
         busy = false
         deskFile = nil
+        editor?.present(nil)
         phase = .idle
         close(id)
         flushSave()
