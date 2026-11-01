@@ -37,6 +37,7 @@ final class SettingsTabs: NSTabViewController {
         for pane in Pane.allCases {
             let host = NSHostingController(rootView: PaneView(pane: pane, ws: ws, chrome: chrome))
             host.sizingOptions = .preferredContentSize
+            host.title = pane.title
             let item = NSTabViewItem(viewController: host)
             item.label = pane.title
             item.identifier = pane.rawValue
@@ -67,7 +68,6 @@ struct PaneView: View {
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
-        .tint(Color.accentInk)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
     }

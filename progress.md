@@ -14,11 +14,14 @@ Done, with evidence:
 - [x] Frame budget: `scripts/frames.sh` (release, CADisplayLink probe in `FrameTests`). Three consecutive runs: worst frame 8.3 ms in every phase (idle, presence sweep, presence move, arrival, keep, revert) on a 120 Hz display. Before the fixes arrival hit 34–131 ms.
   - Causes found: recolouring text forced TextKit re-layout (27–36 ms commit); `drawsBackground` toggling for the dust snapshot redrew the view (16 ms); the dust's per-pixel scan ran on main; the first agent change in a text view costs about 18 ms to commit. Fixes: masks instead of attributes, snapshot from layout fragments, one lift layer instead of ~900 dust layers, and an invisible zero-width warm-up change 0.3 s after a note loads.
 
+- [x] Frame strips: `build/strips/*.png` pair each reference in `build/refs` (web images, not live apps: Word, Docs, iA, Zed, Cursor, Craft, Linear are not installed or need an account) with the matching Quill state. Arrival frames come from `QUILL_STRIP=dir QUILL_LOOK=light|dark scripts/frames.sh` (screen capture perturbs timing, so judge frames, not the timing table, in that mode).
+- [x] Live app (build/live, throwaway profile `app.quill.live`): Settings panes titled and sized per pane; badge menu has nine items; one real Claude Code turn recorded frame by frame (build/live/turn): command bar, "Reading the note" with the gutter mark, "Editing", "Writing 3 changes", type-in, reply, review pill.
+- [x] First-use test protocol: `docs/design/first-use-test.md`.
+
 Remaining:
-- Frame strips against the references (`build/refs`), states via `QUILL_STRIP=dir scripts/frames.sh`.
-- First-use test protocol (`docs/design/first-use-test.md`).
-- Live-app pass of Settings window and badge menu (blocked while the Mac is in use; no keystrokes sent).
-- /perfection pass over every state.
+- Replace `mark-codex.svg` with OpenAI's official file before release, and read Anthropic's and Google's brand terms.
+- The /perfection skill is not installed here; states were reviewed by eye from snapshots (build/snap6), strips, and the live recording.
+- Offscreen snapshots draw no Liquid Glass; the live window does.
 
 ## Audit implementation (2026-11-01, in progress)
 Source: the harsh audit in this session. Phases, in order. Mark each done with evidence.

@@ -1030,7 +1030,7 @@ struct AgentBadge: View {
     }
 
     private var detail: String {
-        [ws.model?.name, ws.mode == .guided ? "Guided edits" : "Margin notes"].compactMap { $0 }.joined(separator: " · ")
+        [ws.model?.name, ws.mode == .notes ? "Notes" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
     var body: some View {
