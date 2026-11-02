@@ -956,21 +956,35 @@ struct Sidebar: View {
             .padding(.horizontal, 10)
             .padding(.top, 6)
             .padding(.bottom, 4)
-            List(selection: Binding(get: { ws.current }, set: { if let url = $0 { ws.open(url) } })) {
+            Text(ws.title)
+                .font(Brand.display(21))
+                .foregroundStyle(Color.ink)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.top, 10)
+                .padding(.bottom, 2)
+            List {
                 if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Section {
-                        Branch(folder: Shelf(ws.notes, in: ws.vault), ws: ws, open: $open, rename: rename)
-                    } header: {
-                        Text(ws.title)
-                    }
+                    Branch(folder: Shelf(ws.notes, in: ws.vault), ws: ws, open: $open, rename: rename)
                 } else {
                     ForEach(shown) { note in
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(note.title).font(.serif(15, .medium)).lineLimit(1)
-                            Text(place(note)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        Button {
+                            ws.open(note.url)
+                            query = ""
+                            chrome.searching = false
+                        } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(note.title).font(.serif(15, .medium)).foregroundStyle(Color.ink).lineLimit(1)
+                                Text(place(note)).font(.system(size: 11)).foregroundStyle(Color.soft).lineLimit(1)
+                            }
+                            .padding(.vertical, 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, 1)
-                        .tag(note.url)
+                        .buttonStyle(.plain)
+                        .listRowBackground(Shade(on: note.url == ws.current))
                     }
                 }
             }
@@ -1067,6 +1081,18 @@ struct Shelf: Identifiable {
     }
 }
 
+struct Shade: View {
+    var on: Bool
+    var hovering = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(on ? Color(nsColor: Theme.selection) : Color.ink.opacity(hovering ? 0.045 : 0))
+            .padding(.horizontal, 10)
+            .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
 struct Branch: View {
     var folder: Shelf
     @Bindable var ws: Workspace
@@ -1079,7 +1105,7 @@ struct Branch: View {
                 Branch(folder: sub, ws: ws, open: $open, rename: rename)
             } label: {
                 Label {
-                    Text(sub.name).font(.serif(15)).lineLimit(1)
+                    Text(sub.name).font(.serif(15)).foregroundStyle(Color.ink).lineLimit(1)
                 } icon: {
                     Image(systemName: "folder").font(.system(size: 12, weight: .light)).foregroundStyle(Color.soft)
                 }
@@ -1090,28 +1116,48 @@ struct Branch: View {
             }
         }
         ForEach(folder.notes) { note in
+            NoteRow(note: note, current: ws.current == note.url) { ws.open(note.url) }
+                .contextMenu {
+                    Button("Rename…") { rename(note) }
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([note.url]) }
+                    Divider()
+                    Button("Move to Trash", role: .destructive) { ws.trash(note) }
+                }
+        }
+    }
+}
+
+struct NoteRow: View {
+    var note: Note
+    var current: Bool
+    var open: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: open) {
             HStack(spacing: 8) {
                 Label {
-                    Text(note.title).font(.serif(15)).lineLimit(1)
+                    Text(note.title).font(.serif(15, current ? .medium : .regular)).foregroundStyle(Color.ink).lineLimit(1)
                 } icon: {
-                    Image(systemName: "doc.text").font(.system(size: 12, weight: .light)).foregroundStyle(Color.soft)
+                    Image(systemName: "doc.text").font(.system(size: 12, weight: .light)).foregroundStyle(current ? Color.ink : Color.soft)
                 }
                 .layoutPriority(1)
                 Spacer(minLength: 4)
                 TimelineView(.everyMinute) { _ in
                     Text(stamp(note.modified, short: true))
                 }
-                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(Color.soft)
+                .opacity(hovering ? 1 : 0)
             }
             .padding(.vertical, 1)
-            .tag(note.url)
-            .contextMenu {
-                Button("Rename…") { rename(note) }
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([note.url]) }
-                Divider()
-                Button("Move to Trash", role: .destructive) { ws.trash(note) }
-            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .listRowBackground(Shade(on: current, hovering: hovering))
+        .accessibilityAddTraits(current ? .isSelected : [])
     }
 }
 
