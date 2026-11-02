@@ -3,6 +3,10 @@ import QuillCore
 
 extension NSAttributedString.Key {
     static let quote = NSAttributedString.Key("QuillQuote")
+    static let fence = NSAttributedString.Key("QuillFence")
+    static let ornament = NSAttributedString.Key("QuillOrnament")
+    static let target = NSAttributedString.Key("QuillTarget")
+    static let chip = NSAttributedString.Key("QuillChip")
 }
 
 @MainActor
@@ -212,6 +216,11 @@ final class QuillTextView: NSTextView {
         let index = characterIndexForInsertion(at: point)
         let over = review.hunk(at: index).map { h in segments(h.range).contains { $0.insetBy(dx: -2, dy: -2).contains(point) } } ?? false
         onHover?(over ? index : nil)
+        let link = hit(point) != nil
+        if link != pointing {
+            pointing = link
+            (link ? NSCursor.pointingHand : NSCursor.iBeam).set()
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -586,9 +595,9 @@ final class QuillTextView: NSTextView {
             case .italic:
                 storage.addAttribute(.font, value: Theme.italic(storage.attribute(.font, at: r.location, effectiveRange: nil) as? NSFont ?? Theme.body), range: r)
             case .code:
-                storage.addAttributes([.font: Theme.mono, .backgroundColor: Theme.wash], range: r)
+                storage.addAttributes([.font: Theme.mono, .chip: Theme.sheet], range: r)
             case .codeBlock:
-                storage.addAttributes([.font: Theme.mono, .foregroundColor: Theme.soft, .paragraphStyle: Theme.paragraph(lineHeight: 24, indent: 0)], range: full)
+                storage.addAttributes([.font: Theme.mono, .foregroundColor: Theme.soft, .fence: true, .paragraphStyle: Theme.paragraph(lineHeight: 24, indent: 18)], range: full)
             case .link:
                 storage.addAttributes([.foregroundColor: Theme.accent, .underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: Theme.accent.withAlphaComponent(0.35)], range: r)
             case .quote:
@@ -599,22 +608,45 @@ final class QuillTextView: NSTextView {
                     .paragraphStyle: Theme.paragraph(lineHeight: 30, indent: 22, hanging: Theme.width(marker, font)),
                 ], range: full)
             case .list:
-                storage.addAttributes([.foregroundColor: Theme.accent], range: r)
-                var end = NSMaxRange(r)
-                while end < NSMaxRange(full), let c = Unicode.Scalar(text.character(at: end)), c == " " || c == "\t" { end += 1 }
-                let leading = text.substring(with: NSRange(location: full.location, length: r.location - full.location))
-                let prefix = text.substring(with: NSRange(location: full.location, length: end - full.location))
-                let indent = Theme.width(leading, Theme.body)
-                storage.addAttribute(.paragraphStyle, value: Theme.paragraph(lineHeight: 30, after: 2, indent: indent,
-                                                                             hanging: Theme.width(prefix, Theme.body) - indent), range: full)
+                storage.addAttributes([.foregroundColor: Theme.soft], range: r)
+                func skip(_ from: Int) -> Int {
+                    var end = from
+                    while end < NSMaxRange(full), let c = Unicode.Scalar(text.character(at: end)), c == " " || c == "\t" { end += 1 }
+                    return end
+                }
+                let bullet = skip(NSMaxRange(r))
+                let box = m.ornaments.first { if case .box = $0.kind { true } else { false } }.map { skip(NSMaxRange($0.range)) }
+                let leading = Theme.width(text.substring(with: NSRange(location: full.location, length: r.location - full.location)), Theme.body)
+                let marker = Theme.width(text.substring(with: NSRange(location: r.location, length: bullet - r.location)), Theme.body)
+                let checkbox = box.map { Theme.width("[ ]", Theme.mono) + Theme.width(text.substring(with: NSRange(location: bullet + 3, length: $0 - bullet - 3)), Theme.body) } ?? 0
+                storage.addAttribute(.paragraphStyle, value: Theme.paragraph(lineHeight: 30, after: 2, indent: leading + checkbox,
+                                                                             hanging: marker + checkbox), range: full)
             case .strike:
                 storage.addAttributes([.strikethroughStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: Theme.soft], range: r)
             case .rule:
-                storage.addAttributes([.foregroundColor: Theme.faint, .kern: 6], range: full)
+                storage.addAttribute(.foregroundColor, value: Theme.faint, range: full)
+            case .highlight:
+                storage.addAttribute(.chip, value: Theme.mark, range: r)
+            case .done:
+                storage.addAttribute(.foregroundColor, value: Theme.soft, range: r)
             }
         }
-        for marker in m.quiet where marker.length > 0 {
-            storage.addAttribute(.foregroundColor, value: Theme.faint, range: marker)
+        for target in m.targets {
+            storage.addAttribute(.target, value: (target.note ? "note:" : "url:") + target.to, range: target.range)
+        }
+        for o in m.ornaments where o.range.length > 0 {
+            if case .box = o.kind { storage.addAttribute(.font, value: Theme.mono, range: o.range) }
+            if active {
+                storage.addAttribute(.foregroundColor, value: Theme.faint, range: o.range)
+                continue
+            }
+            let kind: String = switch o.kind {
+            case .bullet: "bullet"
+            case .box(let checked): checked ? "checked" : "box"
+            case .blank: "blank"
+            case .rule: "rule"
+            }
+            storage.addAttributes([.foregroundColor: NSColor.clear, .ornament: kind], range: o.range)
         }
         for marker in m.markers where marker.length > 0 {
             if active {
@@ -645,23 +677,136 @@ final class QuillTextView: NSTextView {
         guard let tlm = textLayoutManager, let tcs = textContentStorage, let storage = textStorage else { return }
         let origin = textContainerOrigin
         let x = origin.x + Theme.hang + 2
-        Theme.faint.setFill()
+        let column = (textContainer?.size.width ?? Theme.column) - Theme.hang
         let start = tlm.textLayoutFragment(for: CGPoint(x: 0, y: max(0, rect.minY - origin.y)))?.rangeInElement.location ?? tlm.documentRange.location
+        var lo = Int.max, hi = 0
+        var block: CGRect?
+        func panel(_ r: CGRect) {
+            Theme.sheet.setFill()
+            NSBezierPath(roundedRect: CGRect(x: x - 2, y: r.minY - 2, width: column, height: r.height + 4), xRadius: 8, yRadius: 8).fill()
+        }
         tlm.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
             let frame = fragment.layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y)
             if frame.minY > rect.maxY { return false }
-            guard frame.maxY >= rect.minY else { return true }
             let at = tcs.offset(from: tcs.documentRange.location, to: fragment.rangeInElement.location)
+            let end = tcs.offset(from: tcs.documentRange.location, to: fragment.rangeInElement.endLocation)
+            let fenced = at < storage.length && storage.attribute(.fence, at: at, effectiveRange: nil) != nil
+            if fenced {
+                block = block.map { $0.union(frame) } ?? frame
+            } else if let b = block {
+                panel(b)
+                block = nil
+            }
+            guard frame.maxY >= rect.minY else { return true }
+            lo = min(lo, at)
+            hi = max(hi, end)
             if at < storage.length, storage.attribute(.quote, at: at, effectiveRange: nil) != nil {
+                Theme.faint.setFill()
                 NSBezierPath(roundedRect: NSRect(x: x, y: frame.minY + 4, width: 2.5, height: frame.height - 8), xRadius: 1.25, yRadius: 1.25).fill()
             }
             return true
+        }
+        if let b = block { panel(b) }
+        if lo < hi {
+            storage.enumerateAttribute(.chip, in: NSRange(location: lo, length: min(hi, storage.length) - lo)) { value, r, _ in
+                guard let color = value as? NSColor else { return }
+                color.setFill()
+                for seg in segments(r) {
+                    NSBezierPath(roundedRect: seg.insetBy(dx: -3, dy: 0).insetBy(dx: 0, dy: max(0, (seg.height - 25) / 2)).offsetBy(dx: 0, dy: 1), xRadius: 4, yRadius: 4).fill()
+                }
+            }
+            storage.enumerateAttribute(.ornament, in: NSRange(location: lo, length: min(hi, storage.length) - lo)) { value, r, _ in
+                guard let kind = value as? String, let seg = segments(r).first else { return }
+                ornament(kind, in: seg, column: CGRect(x: x, y: seg.minY, width: column, height: seg.height))
+            }
         }
         for h in review.hunks where !growing.contains(h.id) && !warming {
             guard let bar = bar(h), bar.intersects(rect) else { continue }
             Theme.accent.withAlphaComponent(h.id == focused ? 1 : 0.55).setFill()
             NSBezierPath(roundedRect: bar, xRadius: 1, yRadius: 1).fill()
         }
+    }
+
+    private func ornament(_ kind: String, in seg: CGRect, column: CGRect) {
+        let mid = seg.midY + 1.5
+        switch kind {
+        case "bullet":
+            Theme.soft.setFill()
+            NSBezierPath(ovalIn: CGRect(x: seg.midX - 5.75, y: mid - 2.75, width: 5.5, height: 5.5)).fill()
+        case "box", "checked":
+            let side: CGFloat = 15
+            let box = CGRect(x: seg.minX + (seg.width - side) / 2, y: mid - side / 2, width: side, height: side)
+            let shape = NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4)
+            if kind == "box" {
+                Theme.soft.withAlphaComponent(0.7).setStroke()
+                shape.lineWidth = 1.3
+                shape.stroke()
+                return
+            }
+            Theme.accent.setFill()
+            shape.fill()
+            let tick = NSBezierPath()
+            tick.move(to: CGPoint(x: box.minX + 3.8, y: box.midY + 0.2))
+            tick.line(to: CGPoint(x: box.minX + 6.4, y: box.maxY - 4))
+            tick.line(to: CGPoint(x: box.maxX - 3.6, y: box.minY + 4.2))
+            tick.lineWidth = 1.9
+            tick.lineCapStyle = .round
+            tick.lineJoinStyle = .round
+            Theme.paper.setStroke()
+            tick.stroke()
+        case "rule":
+            Theme.rule.setFill()
+            CGRect(x: column.minX, y: seg.midY.rounded(), width: column.width, height: 1).fill()
+        default:
+            break
+        }
+    }
+
+    private func hit(_ point: NSPoint) -> (range: NSRange, value: String, box: Bool)? {
+        guard let storage = textStorage, storage.length > 0 else { return nil }
+        let index = characterIndexForInsertion(at: point)
+        for at in [index, index - 1] where at >= 0 && at < storage.length {
+            var r = NSRange()
+            if let kind = storage.attribute(.ornament, at: at, effectiveRange: &r) as? String, kind == "box" || kind == "checked" {
+                if segments(r).contains(where: { $0.insetBy(dx: -6, dy: -2).contains(point) }) { return (r, kind, true) }
+            }
+            if let raw = storage.attribute(.target, at: at, longestEffectiveRange: &r, in: NSRange(location: 0, length: storage.length)) as? String,
+               NSIntersectionRange(text(lineAt: at), activeLines).length == 0,
+               segments(r).contains(where: { $0.insetBy(dx: -1, dy: -1).contains(point) }) {
+                return (r, raw, false)
+            }
+        }
+        return nil
+    }
+
+    private func text(lineAt at: Int) -> NSRange {
+        (string as NSString).lineRange(for: NSRange(location: at, length: 0))
+    }
+
+    var onOpenNote: ((String) -> Void)?
+    private var pointing = false
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard event.clickCount == 1, !event.modifierFlags.contains(.shift), let found = hit(point) else {
+            return super.mouseDown(with: event)
+        }
+        if found.box {
+            let next = found.value == "checked" ? "[ ]" : "[x]"
+            if shouldChangeText(in: found.range, replacementString: next) {
+                textStorage?.replaceCharacters(in: found.range, with: next)
+                didChangeText()
+                undoManager?.setActionName(next == "[x]" ? "Check" : "Uncheck")
+            }
+        } else if found.value.hasPrefix("note:") {
+            onOpenNote?(String(found.value.dropFirst(5)))
+        } else if let url = URL(string: String(found.value.dropFirst(4))), url.scheme != nil {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if pointing { NSCursor.pointingHand.set() } else { super.cursorUpdate(with: event) }
     }
 
     func bar(_ h: Hunk) -> CGRect? {

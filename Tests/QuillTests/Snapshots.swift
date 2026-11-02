@@ -51,6 +51,18 @@ struct Snapshots {
         > Writing is rewriting. Every sentence earns its place or leaves.
 
         Use `git diff` to see what changed, or read the **whole** thing again tomorrow.
+
+        ## This week
+
+        - [x] Draft the [[pitch]]
+        - [ ] Send it to [Sam](https://example.com) for a ==hard read==
+        - [ ] Cut the ending
+
+        ---
+
+        ```
+        swift build -c release
+        ```
         """.write(to: v.appending(path: "Typography.md"), atomically: true, encoding: .utf8)
         return v
     }
@@ -84,6 +96,8 @@ struct Snapshots {
                 let r = (editor.text.string as NSString).range(of: "What to cut")
                 editor.text.setSelectedRange(NSRange(location: r.location + 3, length: 0))
                 await shot("type")
+                editor.text.scrollToEndOfDocument(nil)
+                await shot("type-end")
                 ws.open(ws.notes.first(where: { $0.title == "pitch" })!.url)
             }
             editor.chrome.hinting = true

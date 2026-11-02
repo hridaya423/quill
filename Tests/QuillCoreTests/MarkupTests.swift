@@ -46,3 +46,29 @@ func texts(_ ranges: [NSRange], _ t: NSString) -> [String] { ranges.map { t.subs
     #expect(fenceState(before: t.range(of: "b", options: .backwards).location, in: t) == false)
     #expect(scan("code **not bold**", inFence: true).0.spans.map(\.style) == [.codeBlock])
 }
+
+@Test func tasksBulletsAndRulesBecomeOrnaments() {
+    let (open, t1) = scan("- [ ] call Sam")
+    #expect(open.ornaments.map(\.kind) == [.blank, .box(false)])
+    #expect(t1.substring(with: open.ornaments[1].range) == "[ ]")
+    let (done, t2) = scan("- [x] ship it")
+    #expect(done.ornaments.last?.kind == .box(true))
+    #expect(done.spans.contains { $0.style == .done && t2.substring(with: $0.range) == "ship it" })
+    #expect(scan("* item").0.ornaments.map(\.kind) == [.bullet])
+    #expect(scan("2. item").0.ornaments.isEmpty)
+    #expect(scan("---").0.ornaments.map(\.kind) == [.rule])
+}
+
+@Test func linksCarryTheirTargets() {
+    let (m, t) = scan("See [[Voice]], [[Demo video|the demo]] and [site](https://q.app).")
+    #expect(m.targets.map(\.to) == ["Voice", "Demo video", "https://q.app"])
+    #expect(m.targets.map(\.note) == [true, true, false])
+    #expect(texts(m.targets.map(\.range), t) == ["Voice", "the demo", "site"])
+    #expect(texts(m.markers, t).contains("[[Demo video|"))
+}
+
+@Test func inlineMarkersHideAndHighlightsMark() {
+    let (m, t) = scan("a **b** ==c==")
+    #expect(texts(m.markers, t) == ["**", "**", "==", "=="])
+    #expect(m.spans.contains { $0.style == .highlight && t.substring(with: $0.range) == "c" })
+}

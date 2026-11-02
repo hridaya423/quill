@@ -144,6 +144,7 @@ final class Workspace {
         }
         editor.onResolve = { [weak self] hunks, outcome in self?.resolved(hunks, outcome) }
         editor.onUndo = { name, back in Ledger.event(back ? "undo" : "redo", detail: name) }
+        editor.onOpenNote = { [weak self] link in self?.follow(link) }
     }
 
     func replace(_ agent: Agent) {
@@ -294,6 +295,21 @@ final class Workspace {
         open(url)
         editor?.setSelectedRange(NSRange(location: 2, length: 0))
         editor?.window?.makeFirstResponder(editor)
+    }
+
+    func follow(_ link: String) {
+        let name = link.components(separatedBy: "#")[0].trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        let path = name.lowercased().hasSuffix(".md") ? String(name.dropLast(3)) : name
+        if let note = notes.first(where: { $0.title.caseInsensitiveCompare(path) == .orderedSame })
+            ?? notes.first(where: { $0.url.path.lowercased().hasSuffix("/" + path.lowercased() + ".md") }) {
+            return open(note.url)
+        }
+        let url = vault.appending(path: path.replacingOccurrences(of: ":", with: "-") + ".md")
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? "# \(url.deletingPathExtension().lastPathComponent)\n\n".write(to: url, atomically: true, encoding: .utf8)
+        refresh()
+        open(url)
     }
 
     @discardableResult

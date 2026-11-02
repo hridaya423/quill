@@ -1,5 +1,14 @@
 # Progress
 
+## Feel: Writer Computer and Obsidian depth (2026-11-02, in progress)
+References studied: Writer Computer's repo (github.com/joelbqz/writer-computer, SPECs/ and screenshots in scratchpad refs) and Obsidian Live Preview.
+Phases:
+1. [x] API is one URL + key; prose skill bundled (`Brand/Prose`).
+2. [x] Live preview editor. Inline markers hide off the caret line. Bullets, task boxes, and rules are drawn ornaments over transparent source, so no reflow. Task boxes click to toggle with undo; boxes are monospace so both states line up. Links and [[wikilinks]] (with |alias) open on click off the caret line, and a missing note is created. ==highlight==. Code and highlight are rounded chips; fenced code sits on a panel. Tests: PreviewTests (real mouse events), MarkupTests. Frames: 8.3 ms worst, every phase.
+3. [ ] Chrome: folder tree sidebar, status bar (words, reading time, selection), sidebar toggle, bottom fade, edited date.
+4. [ ] Section rail: heading ticks, current one bright, hover lists headings, click jumps.
+5. [ ] Co-writer depth: show what it read (sources under the reply, clickable), @ mentions in the command bar, [[ autocomplete.
+
 ## Reach, API providers, and the writing guide (2026-11-02, done)
 - [x] Co-writers can read anywhere in the home folder except hidden folders and ~/Library (`browsable`, `permits`). Writes stay limited to the note's working copy. The prompt names the home folder, says to open what the writer names before writing, and forbids inventing file contents.
   - Reproduced first: Claude Code replied "file access outside this note was refused" and left the note empty.
