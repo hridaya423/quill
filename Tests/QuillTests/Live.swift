@@ -70,13 +70,8 @@ struct Live {
             try "\(p)\n".write(to: vault.appending(path: "p\(i).md"), atomically: true, encoding: .utf8)
         }
         let ws = Workspace(vault: vault)
-        let (scroll, view) = QuillTextView.make()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
-        window.contentView = scroll
-        let choreographer = Choreographer(view: view)
-        choreographer.onFinish = { [weak ws] n in ws?.finishedPlaying(n) }
-        ws.editor = view
-        ws.choreographer = choreographer
+        let (view, window) = try await openPage("")
+        ws.attach(view)
         view.onEdit = { [weak ws] in ws?.edited() }
         ws.start()
         let print = await ws.measure()
@@ -100,11 +95,11 @@ struct Live {
                     if case .applying = ws.phase { continue }
                     break
                 }
-                choreographer.land()
+                await view.settled()
                 let after = (try? String(contentsOf: Ledger.events, encoding: .utf8)) ?? ""
                 let newHeld = after.dropFirst(before.count).split(separator: "\n").filter { $0.contains("\"held\"") }.map(String.init)
                 held += newHeld
-                let edited = view.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                let edited = view.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if r == 0 {
                     let g = try await Self.generic(p, request)
                     arms.append(Arm(source: source, original: p, request: request, quill: edited, generic: g, held: newHeld, retried: !newHeld.isEmpty))

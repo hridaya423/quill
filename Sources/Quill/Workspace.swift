@@ -51,7 +51,9 @@ final class Workspace {
     static let desk = Ledger.dir.appending(path: "desk")
 
     var vault: URL
-    var notes: [Note] = []
+    var notes: [Note] = [] {
+        didSet { editor?.titles(notes.map(\.title)) }
+    }
     var current: URL?
     var phase: Phase = .idle {
         didSet { remedy = nil }
@@ -80,8 +82,7 @@ final class Workspace {
         }
     }
 
-    @ObservationIgnored weak var editor: QuillTextView?
-    @ObservationIgnored var choreographer: Choreographer?
+    @ObservationIgnored weak var editor: Page?
     @ObservationIgnored private var saved = ""
     @ObservationIgnored private var deskBase = ""
     @ObservationIgnored private var deskFile: URL?
@@ -143,9 +144,10 @@ final class Workspace {
         }
     }
 
-    func attach(_ editor: QuillTextView, _ choreographer: Choreographer) {
+    func attach(_ editor: Page) {
         self.editor = editor
-        self.choreographer = choreographer
+        editor.titles(notes.map(\.title))
+        editor.onPlayed = { [weak self] n in self?.finishedPlaying(n) }
         editor.onReview = { [weak self, weak editor] in
             guard let self, let editor, self.review != editor.review else { return }
             self.review = editor.review
@@ -153,7 +155,6 @@ final class Workspace {
         editor.onResolve = { [weak self] hunks, outcome in self?.resolved(hunks, outcome) }
         editor.onUndo = { name, back in Ledger.event(back ? "undo" : "redo", detail: name) }
         editor.onOpenNote = { [weak self] link in self?.follow(link) }
-        editor.noteTitles = { [weak self] in self?.notes.map(\.title) ?? [] }
     }
 
     func replace(_ agent: Agent) {
@@ -222,7 +223,7 @@ final class Workspace {
         vault = url
         Prefs.vault = url.path
         current = nil
-        editor?.text = ""
+        editor?.load("")
         agent.shutdown()
         agent = spec.make()
         start()
@@ -252,26 +253,20 @@ final class Workspace {
         current = url
         if url.path.hasPrefix(vault.path) { Prefs.last = url.path }
         saved = text
-        editor?.text = text
         let (selection, y) = places[url] ?? (NSRange(location: 0, length: 0), 0)
-        editor?.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
-        if y > 0, let editor, let tlm = editor.textLayoutManager {
-            tlm.ensureLayout(for: CGRect(x: 0, y: 0, width: editor.bounds.width, height: y + 2000))
-        }
-        editor?.layoutSubtreeIfNeeded()
-        editor?.scroll(NSPoint(x: 0, y: y))
+        editor?.load(text, caret: NSMaxRange(selection) <= (text as NSString).length ? selection.location : 0, top: y)
         if case .failed = phase { phase = .idle }
     }
 
     private func leave() {
-        choreographer?.land()
+        editor?.land()
         settleReview()
         flushSave()
         guard let url = current, let editor else { return }
-        places[url] = (editor.selectedRange(), editor.enclosingScrollView?.contentView.bounds.origin.y ?? 0)
+        places[url] = (editor.selectedRange(), editor.top)
         let name = url.deletingPathExtension().lastPathComponent
         guard name.wholeMatch(of: /Untitled( \d+)?/) != nil,
-              let first = editor.string.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first,
+              let first = editor.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first,
               first.hasPrefix("# ")
         else { return }
         let heading = first.dropFirst(2)
@@ -287,7 +282,6 @@ final class Workspace {
         guard let editor, !editor.review.isEmpty else { return }
         let hunks = editor.review.hunks
         editor.setReview(Review())
-        editor.undoManager?.removeAllActions()
         resolved(hunks, .unreviewed)
     }
 
@@ -304,7 +298,7 @@ final class Workspace {
         refresh()
         open(url)
         editor?.setSelectedRange(NSRange(location: 2, length: 0))
-        editor?.window?.makeFirstResponder(editor)
+        editor?.focus()
     }
 
     func mentions(_ token: Substring) -> [Mention] {
@@ -395,10 +389,8 @@ final class Workspace {
     func trash(_ note: Note) {
         if current == note.url {
             endTurn()
-            choreographer?.land()
-            editor?.setReview(Review())
             current = nil
-            editor?.text = ""
+            editor?.load("")
         }
         try? FileManager.default.trashItem(at: note.url, resultingItemURL: nil)
         refresh()
@@ -407,7 +399,7 @@ final class Workspace {
 
     func edited() {
         if !margin.isEmpty, let editor {
-            let doc = editor.string as NSString
+            let doc = editor.buffer
             let moved = margin.compactMap { note -> MarginNote? in
                 var note = note
                 note.range = doc.range(of: note.quote, options: [.caseInsensitive, .diacriticInsensitive])
@@ -431,7 +423,7 @@ final class Workspace {
     private func save() {
         saveTask = nil
         guard let url = current, let editor else { return }
-        let text = editor.review.accepted(editor.string)
+        let text = editor.review.accepted(editor.text)
         guard text != saved else { return }
         do {
             try text.write(to: url, atomically: true, encoding: .utf8)
@@ -442,10 +434,10 @@ final class Workspace {
     }
 
     private func whenIdle(_ then: @escaping () -> Void) -> Bool {
-        guard choreographer?.isBusy == true else { return false }
+        guard editor?.isPlaying == true else { return false }
         guard settle == nil else { return true }
         settle = Task { [weak self] in
-            while self?.choreographer?.isBusy == true, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(60)) }
+            while self?.editor?.isPlaying == true, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(60)) }
             guard !Task.isCancelled else { return }
             self?.settle = nil
             then()
@@ -457,9 +449,9 @@ final class Workspace {
         guard let url = current, let editor else { return }
         guard let disk = try? String(contentsOf: url, encoding: .utf8), disk != saved else { return }
         if whenIdle({ [weak self] in self?.reconcileVault() }) { return }
-        let changes = merge(base: saved, current: editor.string, proposed: disk)
+        let changes = merge(base: saved, current: editor.text, proposed: disk)
         saved = disk
-        choreographer?.play(changes, as: .other, turn: 0)
+        editor.play(changes, as: .other, turn: 0)
     }
 
     func reconcileDesk() {
@@ -475,14 +467,14 @@ final class Workspace {
             return
         }
         let flags = bad.map { "\($0.kind): “\($0.phrase.trimmingCharacters(in: .whitespaces))”" }
-        let changes = merge(base: deskBase, current: editor.string, proposed: disk)
+        let changes = merge(base: deskBase, current: editor.text, proposed: disk)
         deskBase = disk
         proposed = true
         guard !changes.isEmpty else { return }
         if firstChangeAt == nil { firstChangeAt = CFAbsoluteTimeGetCurrent() }
         phase = .applying(editor.review.turn(turn).count + changes.count)
         if let first = changes.first { editor.present(editor.paragraph(at: first.range.location)) }
-        choreographer?.play(changes, as: .agent(turn: turn, flags: flags), turn: turn)
+        editor.play(changes, as: .agent(turn: turn, flags: flags), turn: turn)
     }
 
     var reachable: [URL] { voiceSources + (Guide.skill.map { [$0] } ?? []) }
@@ -521,10 +513,16 @@ final class Workspace {
             }
             return
         }
-        choreographer?.land()
+        if editor.isPlaying {
+            Task { [weak self] in
+                await editor.settled()
+                self?.ask(words, mode: override)
+            }
+            return
+        }
         flushSave()
         let mode = override ?? self.mode
-        let text = editor.string
+        let text = editor.text
         let title = url.deletingPathExtension().lastPathComponent
         let fm = FileManager.default
         for stale in (try? fm.contentsOfDirectory(at: Self.desk, includingPropertiesForKeys: nil)) ?? [] { try? fm.removeItem(at: stale) }
@@ -613,7 +611,7 @@ final class Workspace {
 
     private func settleTurn(id: Int, url: URL, failure: String?, words: String, mode: Mode) async {
         reconcileDesk()
-        while choreographer?.isBusy == true || settle != nil {
+        while editor?.isPlaying == true || settle != nil {
             try? await Task.sleep(for: .milliseconds(50))
         }
         busy = false
@@ -632,7 +630,7 @@ final class Workspace {
         let pending = editor?.review.turn(id).count ?? 0
         let said = crisp(readable(raw), sentences: pending > 0 ? 1 : 3)
         if mode == .notes || raw.contains("<notes>") || tagged != nil, let editor,
-           let found = QuillCore.notes(from: tagged.map { "<notes>\($0)</notes>" } ?? raw, in: editor.string), !found.isEmpty {
+           let found = QuillCore.notes(from: tagged.map { "<notes>\($0)</notes>" } ?? raw, in: editor.text), !found.isEmpty {
             margin = found
             let summary = found.count == 1 ? "One note in the margin." : "\(found.count) notes in the margin."
             transcript[url, default: []].append(Line(words: words, reply: summary))
@@ -652,7 +650,7 @@ final class Workspace {
 
     private func focus(_ passage: String) {
         guard let editor else { return }
-        let doc = editor.string as NSString
+        let doc = editor.buffer as NSString
         var r = doc.range(of: passage)
         if r.location == NSNotFound, let line = passage.split(separator: "\n").first(where: { $0.count > 12 }) { r = doc.range(of: String(line)) }
         guard r.location != NSNotFound else { return }
@@ -671,7 +669,7 @@ final class Workspace {
 
     private func resolved(_ hunks: [Hunk], _ outcome: Outcome) {
         guard let editor, !hunks.isEmpty else { return }
-        let doc = NSString(string: editor.string)
+        let doc = NSString(string: editor.text)
         for h in hunks {
             guard asked[h.turn] != nil, NSMaxRange(h.range) <= doc.length else { continue }
             var e = exchange(h, request: asked[h.turn]?.request ?? "", outcome: outcome, in: doc, at: h.range)
@@ -696,14 +694,26 @@ final class Workspace {
 
     func keep(_ hunks: [Hunk]? = nil) {
         guard let editor else { return }
-        choreographer?.land()
+        if editor.isPlaying {
+            Task { [weak self] in
+                await editor.settled()
+                self?.keep(hunks)
+            }
+            return
+        }
         editor.keep(hunks ?? editor.review.hunks)
         if editor.review.isEmpty, case .done = phase { phase = .idle }
     }
 
     func revert(_ hunks: [Hunk]? = nil) {
         guard let editor else { return }
-        choreographer?.land()
+        if editor.isPlaying {
+            Task { [weak self] in
+                await editor.settled()
+                self?.revert(hunks)
+            }
+            return
+        }
         editor.revert(hunks ?? editor.review.hunks)
         if editor.review.isEmpty, case .done = phase { phase = .idle }
     }
@@ -723,7 +733,7 @@ final class Workspace {
             : hunks.last { NSMaxRange($0.range) < at } ?? hunks.last
         guard let next else { return }
         editor.setSelectedRange(NSRange(location: next.range.location, length: 0))
-        editor.scrollRangeToVisible(next.range)
+        editor.reveal(next.range)
     }
 
     func fail(_ message: String, remedy: (String, () -> Void)? = nil) {
@@ -743,7 +753,7 @@ final class Workspace {
         turn += 1
         settle?.cancel()
         settle = nil
-        choreographer?.land()
+        editor?.land()
         busy = false
         deskFile = nil
         editor?.present(nil)

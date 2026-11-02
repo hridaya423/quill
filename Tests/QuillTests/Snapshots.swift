@@ -8,15 +8,43 @@ import QuillCore
 struct Snapshots {
     nonisolated static let dir = ProcessInfo.processInfo.environment["QUILL_SNAPSHOTS"]
 
-    static func render(_ view: NSView, _ name: String, dark: Bool) {
+    static func render(_ view: NSView, _ name: String, dark: Bool) async {
         guard let dir else { return }
         view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
+        var shots: [(NSImage, NSRect)] = []
+        for page in pages(in: view) where !page.isHiddenOrHasHiddenAncestor {
+            try? await still(page)
+            if let image = try? await page.takeSnapshot(configuration: nil) {
+                var frame = page.convert(page.bounds, to: view)
+                if view.isFlipped { frame.origin.y = view.bounds.height - frame.maxY }
+                shots.append((image, frame))
+            }
+        }
+        var out = rep
+        if !shots.isEmpty, let canvas = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: rep.pixelsWide, pixelsHigh: rep.pixelsHigh, bitsPerSample: 8, samplesPerPixel: 4,
+                                                        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) {
+            canvas.size = rep.size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: canvas)
+            (view.appearance ?? NSAppearance(named: .aqua)!).performAsCurrentDrawingAppearance {
+                Theme.paper.setFill()
+                NSRect(origin: .zero, size: rep.size).fill()
+            }
+            for (image, frame) in shots { image.draw(in: frame) }
+            rep.draw(in: NSRect(origin: .zero, size: rep.size), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+            NSGraphicsContext.restoreGraphicsState()
+            out = canvas
+        }
         let url = URL(fileURLWithPath: dir).appending(path: "\(name)-\(dark ? "dark" : "light").png")
-        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        try? out.representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    static func pages(in view: NSView) -> [Page] {
+        (view as? Page).map { [$0] } ?? view.subviews.flatMap(pages)
     }
 
     static func window(_ size: NSSize, dark: Bool) -> NSWindow {
@@ -93,12 +121,12 @@ struct Snapshots {
 
             func shot(_ name: String) async {
                 try? await Task.sleep(for: .milliseconds(450))
-                Self.render(w.contentView!, name, dark: dark)
+                await Self.render(w.contentView!, name, dark: dark)
             }
             await shot("window")
             if let t = ws.notes.first(where: { $0.title == "Typography" }) {
                 ws.open(t.url)
-                let r = (editor.text.string as NSString).range(of: "What to cut")
+                let r = editor.text.buffer.range(of: "What to cut")
                 editor.text.setSelectedRange(NSRange(location: r.location + 3, length: 0))
                 await shot("type")
                 editor.text.scrollToEndOfDocument(nil)
@@ -109,7 +137,7 @@ struct Snapshots {
                 let ow = Self.window(outline.fittingSize, dark: dark)
                 ow.contentView = outline
                 try? await Task.sleep(for: .milliseconds(300))
-                Self.render(outline, "rail-open", dark: dark)
+                await Self.render(outline, "rail-open", dark: dark)
                 editor.chrome.outlining = false
                 ws.open(ws.notes.first(where: { $0.title == "pitch" })!.url)
             }
@@ -163,19 +191,22 @@ struct Snapshots {
             await shot("command-selection")
             editor.chrome.selectedWords = 0
             editor.chrome.commanding = false
-            let pitch = editor.text.string as NSString
+            let pitch = editor.text.buffer
             let hedge = pitch.range(of: "We are basically trying to kind of build a tool that maybe helps people write better, in a way.")
             if hedge.location != NSNotFound {
-                editor.text.perform([Change(range: hedge, text: "We are building a tool that helps people write better.")], by: .agent(turn: 1, flags: []), turn: 1)
+                editor.text.play([Change(range: hedge, text: "We are building a tool that helps people write better.")], as: .agent(turn: 1, flags: []), turn: 1)
+                await editor.text.settled()
                 ws.phase = .said("Cut the hedges from the opening.")
                 await shot("review")
                 ws.phase = .idle
                 editor.text.setSelectedRange(NSRange(location: hedge.location + 4, length: 0))
                 await shot("review-card")
                 ws.revert()
-                let again = (editor.text.string as NSString).range(of: "kind of build")
-                editor.text.perform([Change(range: again, text: "build — not just a tool")], by: .agent(turn: 2, flags: ["Em dash: “—”", "Negative parallelism: “not just”"]), turn: 2)
-                editor.text.setSelectedRange(NSRange(location: again.location + 2, length: 0))
+                try? await Task.sleep(for: .milliseconds(200))
+                let again2 = editor.text.buffer.range(of: "kind of build")
+                editor.text.play([Change(range: again2, text: "build — not just a tool")], as: .agent(turn: 2, flags: ["Em dash: “—”", "Negative parallelism: “not just”"]), turn: 2)
+                await editor.text.settled()
+                editor.text.setSelectedRange(NSRange(location: again2.location + 2, length: 0))
                 await shot("review-flagged")
                 ws.revert()
                 editor.text.setSelectedRange(NSRange(location: 0, length: 0))
@@ -190,7 +221,7 @@ struct Snapshots {
             editor.chrome.searching = true
             await shot("search")
             editor.chrome.searching = false
-            let doc = editor.text.string
+            let doc = editor.text.text
             ws.margin = notes(from: """
             [{"quote": "basically trying to kind of build", "note": "Three hedges in one clause. Say what you are building."},
              {"quote": "Writers lose hours to editing", "note": "Strong. Lead with this."}]
@@ -204,7 +235,7 @@ struct Snapshots {
                 let sw = Self.window(settings.fittingSize, dark: dark)
                 sw.contentView = settings
                 try? await Task.sleep(for: .milliseconds(300))
-                Self.render(settings, "settings-\(pane.rawValue)", dark: dark)
+                await Self.render(settings, "settings-\(pane.rawValue)", dark: dark)
             }
             ws.agentID = "api"
             let api = NSHostingView(rootView: PaneView(pane: .cowriters, ws: ws, chrome: editor.chrome))
@@ -212,7 +243,7 @@ struct Snapshots {
             let aw = Self.window(api.fittingSize, dark: dark)
             aw.contentView = api
             try? await Task.sleep(for: .milliseconds(300))
-            Self.render(api, "settings-api", dark: dark)
+            await Self.render(api, "settings-api", dark: dark)
             ws.agentID = "claude"
         }
     }
@@ -233,14 +264,14 @@ struct Snapshots {
             host.frame = NSRect(x: 0, y: 0, width: 1240, height: 820)
             run.count()
             try? await Task.sleep(for: .milliseconds(1700))
-            Self.render(host, "onboard-0a-strike", dark: dark)
+            await Self.render(host, "onboard-0a-strike", dark: dark)
             try? await Task.sleep(for: .milliseconds(800))
-            Self.render(host, "onboard-0b-insert", dark: dark)
+            await Self.render(host, "onboard-0b-insert", dark: dark)
             try? await Task.sleep(for: .milliseconds(2200))
-            Self.render(host, "onboard-0-overture", dark: dark)
+            await Self.render(host, "onboard-0-overture", dark: dark)
             run.step = .folder
             try? await Task.sleep(for: .milliseconds(900))
-            Self.render(host, "onboard-1-folder", dark: dark)
+            await Self.render(host, "onboard-1-folder", dark: dark)
             run.step = .setup
             run.lines = describe(fingerprint(["i don't know. so this is pretty much it: the thing works, mostly. we ship it tomorrow (maybe)."]))
             run.read = true
@@ -248,7 +279,7 @@ struct Snapshots {
             ws.models = [ModelChoice(id: "default", name: "Opus 4.8 (default)"), ModelChoice(id: "opus", name: "Opus 5.5")]
             ws.model = ws.models[1]
             try? await Task.sleep(for: .milliseconds(900))
-            Self.render(host, "onboard-2-setup", dark: dark)
+            await Self.render(host, "onboard-2-setup", dark: dark)
         }
     }
 }

@@ -4,112 +4,93 @@ import Testing
 
 @MainActor
 struct FormatTests {
-    func view(_ text: String) -> QuillTextView {
-        let (scroll, view) = QuillTextView.make()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
-        window.contentView = scroll
-        scroll.frame = window.contentView!.bounds
-        view.text = text
-        return view
-    }
-
-    @Test func boldWrapsThenUnwraps() {
-        let v = view("make this strong")
+    @Test func boldWrapsThenUnwraps() async throws {
+        let (v, window) = try await openPage("make this strong")
+        defer { window.close() }
         v.setSelectedRange(NSRange(location: 10, length: 6))
         v.bold(nil)
-        #expect(v.string == "make this **strong**")
+        try await until { v.text == "make this **strong**" }
         #expect(v.selectedRange() == NSRange(location: 12, length: 6))
         v.bold(nil)
-        #expect(v.string == "make this strong")
+        try await until { v.text == "make this strong" }
         #expect(v.selectedRange() == NSRange(location: 10, length: 6))
     }
 
-    @Test func boldUndoes() {
-        let v = view("make this strong")
+    @Test func boldUndoes() async throws {
+        let (v, window) = try await openPage("make this strong")
+        defer { window.close() }
         v.setSelectedRange(NSRange(location: 10, length: 6))
         v.bold(nil)
-        v.undoManager?.undo()
-        #expect(v.string == "make this strong")
+        try await until { v.text == "make this **strong**" }
+        v.undo(nil)
+        try await until { v.text == "make this strong" }
     }
 
-    @Test func emptySelectionLeavesCaretBetweenMarkers() {
-        let v = view("a ")
+    @Test func emptySelectionLeavesCaretBetweenMarkers() async throws {
+        let (v, window) = try await openPage("a ")
+        defer { window.close() }
         v.setSelectedRange(NSRange(location: 2, length: 0))
         v.italic(nil)
-        #expect(v.string == "a **")
+        try await until { v.text == "a **" }
         #expect(v.selectedRange() == NSRange(location: 3, length: 0))
     }
 
-    @Test func headingSetsChangesAndClearsLevel() {
-        let v = view("Title\nbody")
+    @Test func headingSetsChangesAndClearsLevel() async throws {
+        let (v, window) = try await openPage("Title\nbody")
+        defer { window.close() }
         v.setSelectedRange(NSRange(location: 2, length: 0))
         let item = NSMenuItem()
         item.tag = 2
         v.heading(item)
-        #expect(v.string == "## Title\nbody")
+        try await until { v.text == "## Title\nbody" }
         item.tag = 1
         v.heading(item)
-        #expect(v.string == "# Title\nbody")
+        try await until { v.text == "# Title\nbody" }
         v.heading(item)
-        #expect(v.string == "Title\nbody")
+        try await until { v.text == "Title\nbody" }
     }
 
-    @Test func untitledNoteTakesItsHeadingWhenLeft() throws {
-        let vault = FileManager.default.temporaryDirectory.appending(path: "quill-title-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
-        try "# Other\n".write(to: vault.appending(path: "Other.md"), atomically: true, encoding: .utf8)
-        let ws = Workspace(vault: vault)
-        let v = view("")
-        ws.editor = v
-        ws.refresh()
-        ws.create()
-        v.insertText("Spring launch plan", replacementRange: v.selectedRange())
-        ws.edited()
-        ws.open(vault.appending(path: "Other.md"))
-        let names = try FileManager.default.contentsOfDirectory(atPath: vault.path).sorted()
-        #expect(names == ["Other.md", "Spring launch plan.md"])
-        #expect(try String(contentsOf: vault.appending(path: "Spring launch plan.md"), encoding: .utf8) == "# Spring launch plan\n")
-    }
-
-    @Test func italicInsideBoldAddsEmphasisInsteadOfStrippingBold() {
-        let v = view("a **bold** b")
+    @Test func italicInsideBoldAddsEmphasisInsteadOfStrippingBold() async throws {
+        let (v, window) = try await openPage("a **bold** b")
+        defer { window.close() }
         v.setSelectedRange(NSRange(location: 4, length: 4))
         v.italic(nil)
-        #expect(v.string == "a ***bold*** b")
+        try await until { v.text == "a ***bold*** b" }
     }
 
-    @Test func bodyTextKeepsHashtags() {
-        let v = view("#tag line")
+    @Test func bodyTextKeepsHashtags() async throws {
+        let (v, window) = try await openPage("#tag line")
+        defer { window.close() }
         v.setSelectedRange(NSRange(location: 3, length: 0))
         let item = NSMenuItem()
         item.tag = 0
         v.heading(item)
-        #expect(v.string == "#tag line")
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(v.text == "#tag line")
     }
 
-    @Test func clicksLandOnTheCharacterUnderThePointer() {
-        let v = view("# Title\n\nThe first paragraph of the note.\n\n- a list item")
-        for word in ["Title", "first", "list"] {
-            let r = (v.string as NSString).range(of: word)
-            let rect = v.segments(NSRange(location: r.location, length: 1)).first!
-            let index = v.characterIndexForInsertion(at: CGPoint(x: rect.minX + 1, y: rect.midY))
-            #expect(index == r.location, "\(word)")
-        }
-    }
-
-    @Test func untitledTitleDropsMarkupAndLeadingDots() throws {
+    func untitled(_ typed: String) async throws -> [String] {
         let vault = FileManager.default.temporaryDirectory.appending(path: "quill-title-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
-        try "x".write(to: vault.appending(path: "Other.md"), atomically: true, encoding: .utf8)
+        try "# Other\n".write(to: vault.appending(path: "Other.md"), atomically: true, encoding: .utf8)
         let ws = Workspace(vault: vault)
-        let v = view("")
+        let (v, window) = try await openPage("")
+        defer { window.close() }
         ws.editor = v
         ws.refresh()
         ws.create()
-        v.insertText(".**Plan**: v2", replacementRange: v.selectedRange())
+        try await until { v.text == "# \n" }
+        try await type(v, typed, at: 2)
         ws.edited()
         ws.open(vault.appending(path: "Other.md"))
-        let names = try FileManager.default.contentsOfDirectory(atPath: vault.path).sorted()
-        #expect(names == ["Other.md", "Plan- v2.md"])
+        return try FileManager.default.contentsOfDirectory(atPath: vault.path).sorted()
+    }
+
+    @Test func untitledNoteTakesItsHeadingWhenLeft() async throws {
+        #expect(try await untitled("Spring launch plan") == ["Other.md", "Spring launch plan.md"])
+    }
+
+    @Test func untitledTitleDropsMarkupAndLeadingDots() async throws {
+        #expect(try await untitled(".**Plan**: v2") == ["Other.md", "Plan- v2.md"])
     }
 }

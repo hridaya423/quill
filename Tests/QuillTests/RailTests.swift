@@ -39,7 +39,7 @@ func openingTheOutlineKeepsTheWindowLayoutStable(height: Int) async throws {
     #expect(editor.chrome.headings.count == 30)
     let rail = try #require(editor.view.subviews.first { $0 is NSHostingView<Rail> })
     let margin = rail.convert(NSPoint(x: rail.bounds.width + 60, y: rail.bounds.midY), to: nil)
-    #expect(window.contentView!.superview!.hitTest(margin) is QuillTextView)
+    #expect(window.contentView!.superview!.hitTest(margin).map { $0 is Page || $0.isDescendant(of: editor.text) } == true)
     for _ in 0..<8 {
         withAnimation(.easeOut(duration: 0.16)) { editor.chrome.outlining.toggle() }
         for _ in 0..<12 {
@@ -56,7 +56,7 @@ func openingTheOutlineKeepsTheWindowLayoutStable(height: Int) async throws {
         }
     }
     for y in stride(from: 0, through: 3000, by: 120) {
-        editor.text.enclosingScrollView!.contentView.scroll(to: NSPoint(x: 0, y: y))
+        _ = try await editor.text.evaluateJavaScript("quill.view.scrollDOM.scrollTop = \(y)")
         try await Task.sleep(for: .milliseconds(16))
         window.displayIfNeeded()
     }
@@ -65,6 +65,6 @@ func openingTheOutlineKeepsTheWindowLayoutStable(height: Int) async throws {
         try await Task.sleep(for: .milliseconds(16))
         window.displayIfNeeded()
     }
-    #expect(window.contentView!.superview!.hitTest(margin) is QuillTextView)
+    #expect(window.contentView!.superview!.hitTest(margin).map { $0 is Page || $0.isDescendant(of: editor.text) } == true)
     window.close()
 }

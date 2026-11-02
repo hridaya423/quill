@@ -3,6 +3,8 @@ import { RangeSetBuilder } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 
 const pattern = /\[\[([^\[\]\n|]+)(?:\|([^\[\]\n]+))?\]\]/g;
+const marked = /==([^=\n]+)==/g;
+const highlight = Decoration.mark({ class: 'cm-highlight' });
 const hidden = Decoration.replace({});
 const blank = Decoration.line({ class: 'cm-blank' });
 const quote = Decoration.line({ class: 'cm-blockquote-line' });
@@ -37,6 +39,14 @@ function build(view: EditorView): DecorationSet {
             marks.push([start, labelStart, hidden], [labelStart, end - 2, link], [end - 2, end, hidden]);
           }
         }
+        for (const m of line.text.matchAll(marked)) {
+          const start = line.from + m.index!;
+          const end = start + m[0].length;
+          if (within(view, start, /Code|Fence/)) continue;
+          if (caretLines.has(line.number)) marks.push([start, end, highlight]);
+          else marks.push([start, start + 2, hidden], [start + 2, end - 2, highlight], [end - 2, end, hidden]);
+        }
+        marks.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
         for (const [a, b, d] of marks) builder.add(a, b, d);
       }
       pos = line.to + 1;

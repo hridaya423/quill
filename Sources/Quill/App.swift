@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         accessory.layoutAttribute = .left
         window.addTitlebarAccessoryViewController(accessory)
         window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(editor.text)
+        editor.text.focus()
 
         NSApp.mainMenu = menu()
         ws.start()
@@ -239,15 +239,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             spellingItem,
         ])
         _ = add("Format", [
-            item("Bold", #selector(QuillTextView.bold(_:)), "b"),
-            item("Italic", #selector(QuillTextView.italic(_:)), "i"),
-            item("Strikethrough", #selector(QuillTextView.strike(_:)), "x", [.command, .shift]),
-            item("Code", #selector(QuillTextView.code(_:)), "c", [.command, .option]),
+            item("Bold", #selector(Page.bold(_:)), "b"),
+            item("Italic", #selector(Page.italic(_:)), "i"),
+            item("Strikethrough", #selector(Page.strike(_:)), "x", [.command, .shift]),
+            item("Code", #selector(Page.code(_:)), "c", [.command, .option]),
             .separator(),
-            item("Heading 1", #selector(QuillTextView.heading(_:)), "1", tag: 1),
-            item("Heading 2", #selector(QuillTextView.heading(_:)), "2", tag: 2),
-            item("Heading 3", #selector(QuillTextView.heading(_:)), "3", tag: 3),
-            item("Body Text", #selector(QuillTextView.heading(_:)), tag: 0),
+            item("Heading 1", #selector(Page.heading(_:)), "1", tag: 1),
+            item("Heading 2", #selector(Page.heading(_:)), "2", tag: 2),
+            item("Heading 3", #selector(Page.heading(_:)), "3", tag: 3),
+            item("Body Text", #selector(Page.heading(_:)), tag: 0),
         ])
         let agents = NSMenu(title: "Co-writer")
         for (i, spec) in AgentSpec.all.enumerated() {
@@ -382,9 +382,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let url = practice.appending(path: "Your first edit.md")
         try? "# Your first edit\n\nThis page lives outside your notes, so nothing here touches them.\n\n\(sentence)\n".write(to: url, atomically: true, encoding: .utf8)
         ws.open(url)
-        let r = (editor.text.string as NSString).range(of: sentence)
+        let r = editor.text.buffer.range(of: sentence)
         if r.location != NSNotFound { editor.text.setSelectedRange(r) }
-        window.makeFirstResponder(editor.text)
+        editor.text.focus()
         editor.chrome.hinting = false
         editor.chrome.coach = source
         Prefs.onboarded = true
@@ -501,9 +501,9 @@ extension AppDelegate: NSMenuDelegate {
 extension EditorController: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(zoomIn(_:)): scroll.magnification < scroll.maxMagnification - 0.01
-        case #selector(zoomOut(_:)): scroll.magnification > scroll.minMagnification + 0.01
-        case #selector(actualSize(_:)): abs(scroll.magnification - 1) > 0.01
+        case #selector(zoomIn(_:)): text.pageZoom < Self.zooms.upperBound - 0.01
+        case #selector(zoomOut(_:)): text.pageZoom > Self.zooms.lowerBound + 0.01
+        case #selector(actualSize(_:)): abs(text.pageZoom - 1) > 0.01
         default: true
         }
     }
@@ -513,11 +513,10 @@ extension EditorController: NSMenuItemValidation {
 final class EditorController: NSViewController {
     let ws: Workspace
     let chrome = Chrome()
-    private(set) var text: QuillTextView!
-    fileprivate var scroll: NSScrollView!
-    private var cards: [Int: NSHostingView<NoteCard>] = [:]
+    static let zooms: ClosedRange<CGFloat> = 0.7...2
+    private(set) var text: Page!
     private var activeNote: Int?
-    private var changeCard: NSHostingView<Gloss>?
+    private var carded: Int?
     private var hovered: Int?
     private var overCard = false
     private var monitor: Any?
@@ -538,9 +537,9 @@ final class EditorController: NSViewController {
     override func loadView() {
         let root = NSView()
         root.wantsLayer = true
-        (scroll, text) = QuillTextView.make()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
+        text = Page()
+        text.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(text)
 
         let empty = NSHostingView(rootView: EmptyState(ws: ws))
         empty.translatesAutoresizingMaskIntoConstraints = false
@@ -569,10 +568,10 @@ final class EditorController: NSViewController {
         root.addSubview(pill)
 
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            text.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            text.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            text.topAnchor.constraint(equalTo: root.topAnchor),
+            text.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             empty.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -40),
             fade.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -589,9 +588,7 @@ final class EditorController: NSViewController {
         ])
         view = root
 
-        let choreographer = Choreographer(view: text)
-        choreographer.onFinish = { [weak self] n in self?.ws.finishedPlaying(n) }
-        ws.attach(text, choreographer)
+        ws.attach(text)
         let review = text.onReview
         text.onReview = { [weak self] in
             review?()
@@ -606,53 +603,63 @@ final class EditorController: NSViewController {
             self?.layoutCard()
             self?.count(selection: true)
         }
-        text.onHover = { [weak self] index in
+        text.onHover = { [weak self] id in
+            guard let self, id != self.hovered else { return }
+            self.hovered = id
+            self.layoutCard()
+        }
+        text.onCardHover = { [weak self] on in
             guard let self else { return }
-            let id = index.flatMap { self.ws.review.hunk(at: $0)?.id }
-            if id != self.hovered { self.hovered = id; self.layoutCard() }
+            self.overCard = on
+            if !on { self.layoutCard() }
         }
-        text.beforeKey = { [weak self, weak choreographer] event in
-            guard let self else { return false }
-            let now = CFAbsoluteTimeGetCurrent()
-            defer { self.lastKey = now }
-            guard let choreographer, choreographer.isBusy else { return false }
-            choreographer.land()
-            guard let event, event.keyCode == 49, event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
-            return now - self.lastKey > 2
+        text.onKeep = { [weak self] id in
+            guard let self, let hunk = self.ws.review.hunk(id) else { return }
+            self.overCard = false
+            self.ws.keep([hunk])
         }
-        NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: text, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.layoutNotes()
-                self?.layoutCard()
-            }
+        text.onRevert = { [weak self] id in
+            guard let self, let hunk = self.ws.review.hunk(id) else { return }
+            self.overCard = false
+            self.ws.revert([hunk])
         }
-        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.locate() }
+        text.onApplyNote = { [weak self] id in
+            guard let self, let note = self.ws.margin.first(where: { $0.id == id }) else { return }
+            self.apply(note)
         }
-        scroll.allowsMagnification = true
-        scroll.minMagnification = 0.7
-        scroll.maxMagnification = 2
-        if Prefs.zoom > 0 { scroll.magnification = Prefs.zoom }
-        NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scroll, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { if let self { Prefs.zoom = self.scroll.magnification } }
+        text.onDismissNote = { [weak self] id in
+            guard let self, let note = self.ws.margin.first(where: { $0.id == id }) else { return }
+            Ledger.event("note-dismissed", detail: "\(note.lens ?? "-"): \(note.note)")
+            self.ws.margin.removeAll { $0.id == id }
         }
+        text.onNoteHover = { [weak self] id in
+            guard let self, id != self.activeNote else { return }
+            self.activeNote = id
+            self.layoutNotes()
+        }
+        text.onScroll = { [weak self] in self?.locate() }
+        text.onLoad = { [weak self] in
+            self?.layoutNotes()
+            self?.count()
+        }
+        if Prefs.zoom > 0 { text.pageZoom = Prefs.zoom }
         observe()
         listen()
     }
 
     func count(selection: Bool = false) {
         let sel = text.selectedRange()
-        let marked = sel.length == 0 ? 0 : wordCount((text.string as NSString).substring(with: sel))
+        let marked = sel.length == 0 ? 0 : wordCount(text.buffer.substring(with: sel))
         if chrome.marked != marked { chrome.marked = marked }
-        let length = (text.string as NSString).length
+        let length = text.buffer.length
         guard !selection || length != counted else { return }
         counted = length
         tally?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            let words = wordCount(text.string)
+            let words = wordCount(text.text)
             if chrome.words != words { chrome.words = words }
-            let headings = outline(text.string as NSString)
+            let headings = outline(text.buffer)
             if chrome.headings != headings { chrome.headings = headings }
             locate()
         }
@@ -662,51 +669,28 @@ final class EditorController: NSViewController {
 
     func locate() {
         guard !chrome.headings.isEmpty else { return chrome.section = nil }
-        let visible = text.visibleRect
-        let top = text.characterIndexForInsertion(at: NSPoint(x: text.textContainerOrigin.x + Theme.hang + 20, y: visible.minY + visible.height * 0.25))
-        let atEnd = visible.maxY >= text.bounds.maxY - 4
-        let current = atEnd ? chrome.headings.last : chrome.headings.last { $0.location <= top } ?? chrome.headings.first
+        let top = text.anchor
+        let current = text.atEnd ? chrome.headings.last : chrome.headings.last { $0.location <= top } ?? chrome.headings.first
         if chrome.section != current?.location { chrome.section = current?.location }
     }
 
     func jump(to heading: Heading) {
-        guard let rect = text.segments(NSRange(location: heading.location, length: 0)).first else { return }
-        let line = (text.string as NSString).lineRange(for: NSRange(location: heading.location, length: 0))
+        let line = text.buffer.lineRange(for: NSRange(location: heading.location, length: 0))
         var end = NSMaxRange(line)
-        if end > line.location, (text.string as NSString).character(at: end - 1) == 10 { end -= 1 }
+        if end > line.location, text.buffer.character(at: end - 1) == 10 { end -= 1 }
         text.setSelectedRange(NSRange(location: end, length: 0))
-        let clip = scroll.contentView
-        let y = max(0, min(rect.minY - 64, text.bounds.height - clip.bounds.height))
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            clip.scroll(to: NSPoint(x: 0, y: y))
-        } else {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.32
-                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
-                clip.animator().setBoundsOrigin(NSPoint(x: 0, y: y))
-            }
-        }
-        scroll.reflectScrolledClipView(clip)
+        text.glide(to: heading.location)
         chrome.section = heading.location
-        view.window?.makeFirstResponder(text)
+        text.focus()
     }
 
-    @objc func zoomIn(_ sender: Any?) { zoom(scroll.magnification * 1.1) }
-    @objc func zoomOut(_ sender: Any?) { zoom(scroll.magnification / 1.1) }
+    @objc func zoomIn(_ sender: Any?) { zoom(text.pageZoom * 1.1) }
+    @objc func zoomOut(_ sender: Any?) { zoom(text.pageZoom / 1.1) }
     @objc func actualSize(_ sender: Any?) { zoom(1) }
 
     private func zoom(_ value: CGFloat) {
-        let clamped = min(scroll.maxMagnification, max(scroll.minMagnification, value))
-        let caret = text.segments(NSRange(location: text.selectedRange().location, length: 0)).first
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.18
-            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
-            if let caret {
-                scroll.animator().setMagnification(clamped, centeredAt: CGPoint(x: caret.midX, y: caret.midY))
-            } else {
-                scroll.animator().magnification = clamped
-            }
-        }
+        let clamped = min(Self.zooms.upperBound, max(Self.zooms.lowerBound, value))
+        text.pageZoom = clamped
         Prefs.zoom = clamped
     }
 
@@ -729,7 +713,7 @@ final class EditorController: NSViewController {
                 self.title()
                 self.announce()
                 if !self.chrome.commanding, !self.chrome.searching, self.view.window?.firstResponder !== self.text {
-                    self.view.window?.makeFirstResponder(self.text)
+                    self.text.focus()
                 }
                 self.layoutNotes()
                 self.afterTurn()
@@ -742,7 +726,7 @@ final class EditorController: NSViewController {
         guard let window = view.window else { return }
         window.title = ws.current?.deletingPathExtension().lastPathComponent ?? ""
         window.representedURL = ws.current
-        text.isEditable = ws.current != nil
+        text.editable = ws.current != nil
     }
 
     private var spoken = ""
@@ -785,7 +769,7 @@ final class EditorController: NSViewController {
         guard !ws.listener.isListening else { return }
         if !chrome.commanding {
             let sel = text.selectedRange()
-            chrome.selectedWords = sel.length == 0 ? 0 : (text.string as NSString).substring(with: sel).split(whereSeparator: \.isWhitespace).count
+            chrome.selectedWords = sel.length == 0 ? 0 : text.buffer.substring(with: sel).split(whereSeparator: \.isWhitespace).count
             chrome.recall = nil
         }
         chrome.commanding.toggle()
@@ -847,7 +831,7 @@ final class EditorController: NSViewController {
         holding = true
         chord = false
         chrome.commanding = false
-        ws.choreographer?.land()
+        ws.editor?.land()
         Task {
             guard await Listener.authorize() else {
                 ws.fail("Quill needs the microphone to hear you.", remedy: ("Open Settings", {
@@ -882,101 +866,18 @@ final class EditorController: NSViewController {
     }
 
     private func layoutCard() {
-        let id = overCard ? changeCard?.rootView.hunk.id : hovered ?? ws.focused?.id
+        let id = overCard ? carded : hovered ?? ws.focused?.id
         text.focused = id
         if ws.focusID != id { ws.focusID = id }
-        guard let id, let hunk = ws.review.hunk(id), let bar = text.bar(hunk) else {
-            changeCard?.removeFromSuperview()
-            changeCard = nil
-            overCard = false
-            return
-        }
-        let right = text.textContainerOrigin.x + (text.textContainer?.size.width ?? Theme.column) + 24
-        let room = text.bounds.width - right - 20
-        let width: CGFloat? = room >= 150 ? min(220, room) : nil
-        let boxed = width == nil
-        let gloss = Gloss(
-            hunk: hunk,
-            width: width,
-            keep: { [weak self] in
-                self?.overCard = false
-                self?.ws.keep([hunk])
-            },
-            revert: { [weak self] in
-                self?.overCard = false
-                self?.ws.revert([hunk])
-            },
-            hover: { [weak self] on in
-                self?.overCard = on
-                if !on { self?.layoutCard() }
-            }
-        )
-        if changeCard?.rootView.hunk.id != id || changeCard?.rootView.width != width {
-            changeCard?.removeFromSuperview()
-            let h = NSHostingView(rootView: gloss)
-            h.sizingOptions = [.intrinsicContentSize]
-            text.addSubview(h)
-            changeCard = h
-        }
-        guard let host = changeCard else { return }
-        host.rootView = gloss
-        let size = host.fittingSize
-        if boxed {
-            let x = min(max(text.textContainerOrigin.x + Theme.hang, bar.minX + 20), text.bounds.width - size.width - 12)
-            host.frame = CGRect(x: x, y: bar.maxY + 8, width: size.width, height: size.height)
-        } else {
-            host.frame = CGRect(x: right, y: bar.minY - 2, width: size.width, height: size.height)
-        }
+        let hunk = id.flatMap { ws.review.hunk($0) }
+        if hunk == nil { overCard = false }
+        guard hunk?.id != carded || hunk == nil else { return }
+        carded = hunk?.id
+        text.card(hunk)
     }
 
     private func layoutNotes() {
-        let margin = ws.margin
-        let wanted = Set(margin.map(\.id))
-        for (id, card) in cards where !wanted.contains(id) {
-            card.removeFromSuperview()
-            cards[id] = nil
-        }
-        let all = NSRange(location: 0, length: (text.string as NSString).length)
-        text.clearMarks(.underlineColor)
-        text.gutter = !margin.isEmpty
-        guard !margin.isEmpty else { return }
-        let x = text.textContainerInset.width + (text.textContainer?.size.width ?? Theme.column) + 40
-        var floor: CGFloat = 0
-        for note in margin {
-            guard NSMaxRange(note.range) <= all.length else { continue }
-            var look: [NSAttributedString.Key: Any] = [
-                .underlineStyle: NSUnderlineStyle([.single, .patternDot]).rawValue,
-                .underlineColor: Theme.accent.withAlphaComponent(0.75),
-            ]
-            if activeNote == note.id { look[.backgroundColor] = Theme.accent.withAlphaComponent(0.12) }
-            text.mark(note.range, look)
-            let card = cards[note.id] ?? {
-                let h = NSHostingView(rootView: NoteCard(note: note, active: false, busy: false, apply: {}, dismiss: {}, hover: { _ in }))
-                h.sizingOptions = [.intrinsicContentSize]
-                text.addSubview(h)
-                cards[note.id] = h
-                return h
-            }()
-            card.rootView = NoteCard(
-                note: note,
-                active: activeNote == note.id,
-                busy: ws.busy,
-                apply: { [weak self] in self?.apply(note) },
-                dismiss: { [weak self] in
-                    Ledger.event("note-dismissed", detail: "\(note.lens ?? "-"): \(note.note)")
-                    self?.ws.margin.removeAll { $0.id == note.id }
-                },
-                hover: { [weak self] on in
-                    guard let self else { return }
-                    let next = on ? note.id : (self.activeNote == note.id ? nil : self.activeNote)
-                    if next != self.activeNote { self.activeNote = next; self.layoutNotes() }
-                }
-            )
-            let size = card.fittingSize
-            let y = max((text.segments(note.range).first?.minY ?? 0) + 7, floor)
-            card.frame = CGRect(x: x, y: y, width: 220, height: size.height)
-            floor = y + size.height + 14
-        }
+        text.notes(ws.margin, active: activeNote, busy: ws.busy)
     }
 
     private func apply(_ note: MarginNote) {
