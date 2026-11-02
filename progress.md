@@ -6,7 +6,7 @@ Phases:
 1. [x] API is one URL + key; prose skill bundled (`Brand/Prose`).
 2. [x] Live preview editor. Inline markers hide off the caret line. Bullets, task boxes, and rules are drawn ornaments over transparent source, so no reflow. Task boxes click to toggle with undo; boxes are monospace so both states line up. Links and [[wikilinks]] (with |alias) open on click off the caret line, and a missing note is created. ==highlight==. Code and highlight are rounded chips; fenced code sits on a panel. Tests: PreviewTests (real mouse events), MarkupTests. Frames: 8.3 ms worst, every phase.
 3. [x] Chrome: folder tree sidebar (folders first, notes by recency, short times, the open note's folders auto-expand, expansion remembered, "New Note Here"); search lists folder and time; status line bottom right (words, minutes, "N of M words" for a selection; hides while the co-writer works); bottom fade; sidebar toggle in the titlebar. Edited date skipped: the status line carries enough. Live window check pending: Quill sat in the Stage Manager strip while the user worked, so the titlebar toggle is unverified.
-4. [ ] Section rail: heading ticks, current one bright, hover lists headings, click jumps.
+4. [x] Section rail (QuillCore `outline`): a tick per heading at the editor's left edge, the current section in accent (tracks scroll; last heading at the end). Hover opens an outline card; click jumps with a 0.32 s ease (instant under Reduce Motion) and puts the caret on the heading. Snapshots: type, type-end, rail-open.
 5. [ ] Co-writer depth: show what it read (sources under the reply, clickable), @ mentions in the command bar, [[ autocomplete.
 
 ## Reach, API providers, and the writing guide (2026-11-02, done)

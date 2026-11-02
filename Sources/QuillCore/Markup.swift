@@ -177,3 +177,31 @@ public func wordCount(_ text: String) -> Int {
     }
     return count
 }
+
+public struct Heading: Equatable, Sendable, Identifiable {
+    public var level: Int
+    public var title: String
+    public var location: Int
+    public var id: Int { location }
+}
+
+public func outline(_ text: NSString) -> [Heading] {
+    var found: [Heading] = []
+    var inFence = false
+    var cursor = 0
+    while cursor < text.length {
+        let line = text.lineRange(for: NSRange(location: cursor, length: 0))
+        if isFenceLine(text, line) {
+            inFence.toggle()
+        } else if !inFence, let h = heading.firstMatch(in: text as String, range: line) {
+            let marker = h.range(at: 1)
+            let title = text.substring(with: NSRange(location: NSMaxRange(marker), length: NSMaxRange(line) - NSMaxRange(marker)))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !title.isEmpty {
+                found.append(Heading(level: text.substring(with: marker).filter { $0 == "#" }.count, title: title, location: line.location))
+            }
+        }
+        cursor = NSMaxRange(line)
+    }
+    return found
+}

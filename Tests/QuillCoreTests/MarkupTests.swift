@@ -78,3 +78,11 @@ func texts(_ ranges: [NSRange], _ t: NSString) -> [String] { ranges.map { t.subs
     #expect(wordCount("") == 0)
     #expect(wordCount("  ---  ") == 0)
 }
+
+@Test func outlineSkipsCodeAndEmptyHeadings() {
+    let t = "# Pitch\n\nbody\n\n## Why now\n```\n# not a heading\n```\n### \n## Ask\n" as NSString
+    let o = outline(t)
+    #expect(o.map(\.title) == ["Pitch", "Why now", "Ask"])
+    #expect(o.map(\.level) == [1, 2, 2])
+    #expect(t.substring(from: o[2].location).hasPrefix("## Ask"))
+}

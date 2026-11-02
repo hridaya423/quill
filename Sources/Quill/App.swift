@@ -11,6 +11,8 @@ final class Chrome {
     var selectedWords = 0
     var words = 0
     var marked = 0
+    var headings: [Heading] = []
+    var section: Int?
     var coach: String?
     var history: [String] = Prefs.history
     var recall: Int?
@@ -551,6 +553,11 @@ final class EditorController: NSViewController {
         status.sizingOptions = [.intrinsicContentSize]
         root.addSubview(status)
 
+        let rail = NSHostingView(rootView: Rail(chrome: chrome) { [weak self] h in self?.jump(to: h) })
+        rail.translatesAutoresizingMaskIntoConstraints = false
+        rail.sizingOptions = [.intrinsicContentSize]
+        root.addSubview(rail)
+
         let pill = NSHostingView(rootView: Pill(ws: ws, chrome: chrome))
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.sizingOptions = [.intrinsicContentSize]
@@ -569,6 +576,8 @@ final class EditorController: NSViewController {
             fade.heightAnchor.constraint(equalToConstant: 48),
             status.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
             status.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -14),
+            rail.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
+            rail.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -20),
             pill.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             pill.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             pill.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, constant: -32),
@@ -612,6 +621,9 @@ final class EditorController: NSViewController {
                 self?.layoutCard()
             }
         }
+        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.locate() }
+        }
         scroll.allowsMagnification = true
         scroll.minMagnification = 0.7
         scroll.maxMagnification = 2
@@ -632,6 +644,40 @@ final class EditorController: NSViewController {
         counted = length
         let words = wordCount(text.string)
         if chrome.words != words { chrome.words = words }
+        let headings = outline(text.string as NSString)
+        if chrome.headings != headings { chrome.headings = headings }
+        locate()
+    }
+
+    func locate() {
+        guard !chrome.headings.isEmpty else { return chrome.section = nil }
+        let visible = text.visibleRect
+        let top = text.characterIndexForInsertion(at: NSPoint(x: text.textContainerOrigin.x + Theme.hang + 20, y: visible.minY + visible.height * 0.25))
+        let atEnd = visible.maxY >= text.bounds.maxY - 4
+        let current = atEnd ? chrome.headings.last : chrome.headings.last { $0.location <= top } ?? chrome.headings.first
+        if chrome.section != current?.location { chrome.section = current?.location }
+    }
+
+    func jump(to heading: Heading) {
+        guard let rect = text.segments(NSRange(location: heading.location, length: 0)).first else { return }
+        let line = (text.string as NSString).lineRange(for: NSRange(location: heading.location, length: 0))
+        var end = NSMaxRange(line)
+        if end > line.location, (text.string as NSString).character(at: end - 1) == 10 { end -= 1 }
+        text.setSelectedRange(NSRange(location: end, length: 0))
+        let clip = scroll.contentView
+        let y = max(0, min(rect.minY - 64, text.bounds.height - clip.bounds.height))
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            clip.scroll(to: NSPoint(x: 0, y: y))
+        } else {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.32
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+                clip.animator().setBoundsOrigin(NSPoint(x: 0, y: y))
+            }
+        }
+        scroll.reflectScrolledClipView(clip)
+        chrome.section = heading.location
+        view.window?.makeFirstResponder(text)
     }
 
     @objc func zoomIn(_ sender: Any?) { zoom(scroll.magnification * 1.1) }
@@ -1104,6 +1150,82 @@ struct Status: View {
         .opacity(shown ? 1 : 0)
         .animation(.easeOut(duration: 0.2), value: shown)
         .allowsHitTesting(false)
+    }
+}
+
+struct Rail: View {
+    var chrome: Chrome
+    var jump: (Heading) -> Void
+    @State private var hovering: Bool
+
+    init(chrome: Chrome, open: Bool = false, jump: @escaping (Heading) -> Void) {
+        self.chrome = chrome
+        self.jump = jump
+        _hovering = State(initialValue: open)
+    }
+
+    private var shown: [Heading] {
+        let all = chrome.headings.filter { $0.level <= 3 }
+        return all.count > 32 ? all.filter { $0.level <= 2 } : all
+    }
+
+    private var current: Int? {
+        guard let section = chrome.section else { return nil }
+        return shown.last { $0.location <= section }?.location
+    }
+
+    var body: some View {
+        if shown.count >= 2 {
+            HStack(alignment: .center, spacing: 6) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(shown) { h in
+                        let on = h.location == current
+                        Capsule()
+                            .fill(on ? Color.accentInk : Color.ink)
+                            .frame(width: on ? 12 : CGFloat(9 - 2 * min(h.level, 3)), height: 2)
+                            .opacity(on ? 1 : hovering ? 0.35 : 0.2)
+                            .padding(.leading, CGFloat(min(h.level, 3) - 1) * 2)
+                    }
+                }
+                .frame(width: 16, alignment: .leading)
+                .padding(.vertical, 12)
+                .padding(.horizontal, 8)
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Outline, \(shown.count) sections")
+                if hovering {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(shown) { h in
+                                Button { jump(h) } label: {
+                                    Text(h.title)
+                                        .font(.serif(h.level == 1 ? 15.5 : 14.5, h.level == 1 ? .medium : .regular))
+                                        .foregroundStyle(h.location == current ? Color.accentInk : h.level > 2 ? Color.soft : Color.ink)
+                                        .lineLimit(1)
+                                        .padding(.leading, CGFloat(min(h.level, 3) - 1) * 12)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.vertical, 5)
+                                        .padding(.horizontal, 12)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(Press())
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .frame(width: 240)
+                    .frame(maxHeight: 420)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.sheet))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.rule, lineWidth: 1))
+                    .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
+                }
+            }
+            .onHover { on in
+                withAnimation(.easeOut(duration: on ? 0.16 : 0.12)) { hovering = on }
+            }
+        }
     }
 }
 
