@@ -246,7 +246,7 @@ struct Snapshots {
 
     @Test(.enabled(if: dir != nil)) func onboarding() async throws {
         Brand.register()
-        for dark in [false] {
+        for dark in [false, true] {
             let ws = Workspace(vault: try Self.vault())
             let run = Firstrunner(current: ws.vault)
             run.places = [
@@ -254,28 +254,43 @@ struct Snapshots {
                 Place(url: URL(fileURLWithPath: NSHomeDirectory() + "/Obsidian Vault"), label: "Obsidian Vault", detail: "Obsidian vault · ~/Obsidian Vault"),
             ]
             run.chosen = run.places[1].url
+            run.sentence = (text: "I think the second draft is basically better, but the ending maybe still needs a kind of sharper turn.", source: "Essay notes")
             let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { _ in })
+            host.sizingOptions = []
             let w = Self.window(NSSize(width: 1240, height: 820), dark: dark)
             w.contentView = host
             host.frame = NSRect(x: 0, y: 0, width: 1240, height: 820)
             run.count()
-            try? await Task.sleep(for: .milliseconds(1700))
-            await Self.render(host, "onboard-0a-strike", dark: dark)
-            try? await Task.sleep(for: .milliseconds(800))
-            await Self.render(host, "onboard-0b-insert", dark: dark)
-            try? await Task.sleep(for: .milliseconds(2200))
-            await Self.render(host, "onboard-0-overture", dark: dark)
-            run.step = .folder
-            try? await Task.sleep(for: .milliseconds(900))
+            if !dark {
+                for (wait, name) in [(1200, "a-mark"), (1500, "b-word"), (1900, "c-sentence"), (1500, "d-listen"), (1000, "e-strike"), (1300, "f-kept")] {
+                    try? await Task.sleep(for: .milliseconds(wait))
+                    await Self.render(host, "onboard-0\(name)", dark: dark)
+                }
+                try? await Task.sleep(for: .milliseconds(3000))
+            } else {
+                run.step = .folder
+                try? await Task.sleep(for: .milliseconds(1500))
+            }
             await Self.render(host, "onboard-1-folder", dark: dark)
-            run.step = .setup
             run.lines = describe(fingerprint(["i don't know. so this is pretty much it: the thing works, mostly. we ship it tomorrow (maybe)."]))
             run.read = true
+            run.step = .voice
+            try? await Task.sleep(for: .milliseconds(1200))
+            await Self.render(host, "onboard-2-voice", dark: dark)
+            run.step = .talk
+            run.holding = true
+            run.level = 0.6
+            run.heard = "make the ending land harder"
+            try? await Task.sleep(for: .milliseconds(1000))
+            await Self.render(host, "onboard-3-talk", dark: dark)
+            run.holding = false
+            run.spoke = true
             ws.installed = ["npx": true, "codex": true, "gemini": false, "opencode": false]
             ws.models = [ModelChoice(id: "default", name: "Opus 4.8 (default)"), ModelChoice(id: "opus", name: "Opus 5.5")]
             ws.model = ws.models[1]
-            try? await Task.sleep(for: .milliseconds(900))
-            await Self.render(host, "onboard-2-setup", dark: dark)
+            run.step = .cowriter
+            try? await Task.sleep(for: .milliseconds(1000))
+            await Self.render(host, "onboard-4-cowriter", dark: dark)
         }
     }
 }

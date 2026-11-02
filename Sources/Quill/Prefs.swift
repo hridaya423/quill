@@ -22,6 +22,14 @@ enum TalkKey: String, CaseIterable, Identifiable {
         }
     }
 
+    var word: String {
+        switch self {
+        case .rightOption: "right Option"
+        case .rightCommand: "right Command"
+        case .fn: "fn"
+        }
+    }
+
     var title: String {
         switch self {
         case .rightOption: "Right Option (⌥)"

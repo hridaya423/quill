@@ -16,6 +16,7 @@ final class Chrome {
     var recall: Int?
     var stash = ""
     var searching = false
+    var onboarding = false
     var talkKey = Prefs.talkKey {
         didSet { Prefs.talkKey = talkKey }
     }
@@ -361,6 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Ledger.event("onboarding-started")
         let run = Firstrunner(current: ws.vault)
         let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { [weak self] picked in self?.landed(picked) })
+        host.sizingOptions = []
         host.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(host)
         NSLayoutConstraint.activate([
@@ -370,6 +372,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             host.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
         overlay = host
+        editor.chrome.onboarding = true
+        for accessory in window.titlebarAccessoryViewControllers { accessory.view.isHidden = true }
     }
 
     private func landed(_ picked: (sentence: String, source: String)?) {
@@ -385,6 +389,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editor.chrome.hinting = false
         editor.chrome.coach = source
         Prefs.onboarded = true
+        editor.chrome.onboarding = false
+        for accessory in window.titlebarAccessoryViewControllers { accessory.view.isHidden = false }
         Ledger.event("onboarding-finished")
         guard let overlay else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -763,7 +769,7 @@ final class EditorController: NSViewController {
             }
         }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
-            guard let self, event.window == self.view.window else { return event }
+            guard let self, event.window == self.view.window, !self.chrome.onboarding else { return event }
             if event.type == .keyDown {
                 if self.toggled, event.keyCode == 36 || event.keyCode == 76 {
                     self.toggleTalk()
