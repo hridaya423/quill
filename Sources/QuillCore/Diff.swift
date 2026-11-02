@@ -131,8 +131,14 @@ public func replacing(_ edits: [(find: String, replace: String)], in text: Strin
     let doc = text as NSString
     var found: [Change] = []
     for edit in edits {
+        if edit.find.isEmpty {
+            guard !found.contains(where: { $0.range.location == doc.length }) else { return nil }
+            let gap = text.isEmpty || text.hasSuffix("\n\n") ? "" : text.hasSuffix("\n") ? "\n" : "\n\n"
+            found.append(Change(range: NSRange(location: doc.length, length: 0), text: gap + edit.replace))
+            continue
+        }
         let r = doc.range(of: edit.find)
-        guard !edit.find.isEmpty, r.location != NSNotFound,
+        guard r.location != NSNotFound,
               doc.range(of: edit.find, range: NSRange(location: r.location + 1, length: doc.length - r.location - 1)).location == NSNotFound,
               !found.contains(where: { NSIntersectionRange($0.range, r).length > 0 })
         else { return nil }

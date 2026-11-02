@@ -43,13 +43,20 @@ public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, brief
         lines += ["They have this passage selected, so \"this\" means it:", "<selection>", s, "</selection>", ""]
     }
     lines += ["The note right now:", "<document>", r.text, "</document>", ""]
+    lines += [
+        "You can read the writer's other files when they point you at them. Their home folder is \(NSHomeDirectory()). A path they name, like \"Projects/site\", is inside it unless it starts with /. Hidden folders and Library are off limits. Read with your file tools; don't run commands that change anything.",
+        "When they name a folder or file, open it before you write a word: list the folder, then read the files that explain it, like the README and any plans or docs.",
+        "Never invent what a file, folder, or project contains. If you can't find or open something they named, say so in one sentence and write nothing else.",
+        "",
+    ]
     let how = canEditFiles
-        ? "edit \(r.path) directly with your file editing tool. Edit only that file and never run commands"
+        ? "edit \(r.path) directly with your file editing tool. Edit only that file"
         : "call the edit tool"
     switch r.mode {
     case .guided:
         lines += [
             "If they want the text changed, \(how). Make the smallest edits that do what they asked. Keep their voice. Leave every other word exactly as it is. The writer reviews each change and keeps or reverts it.",
+            "If they ask for new writing, like a draft, write it into the note in their voice, built only from what they gave you and what you read.",
             "If they asked a question or want your opinion, don't edit. Answer instead.",
             "Finish with a plain-text reply for them. After an edit: one short sentence, at most 12 words, naming what you changed; don't quote the new text or mention what you left alone. For an opinion: up to three sentences, specific and honest, the way a good editor talks. No Markdown, no lists, no preamble, no em dashes.",
         ]

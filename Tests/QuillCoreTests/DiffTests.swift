@@ -119,3 +119,10 @@ struct SplitMix {
     #expect(replacing([("a", "x")], in: "a a") == nil)
     #expect(replacing([("red blue", "x"), ("blue", "y")], in: "red blue") == nil)
 }
+
+@Test func anEmptyFindAddsToTheEnd() {
+    #expect(replacing([("", "New paragraph.")], in: "# Pitch\n") == "# Pitch\n\nNew paragraph.")
+    #expect(replacing([("", "Start.")], in: "") == "Start.")
+    #expect(replacing([("Pitch", "Plan"), ("", "More.")], in: "# Pitch\n\n") == "# Plan\n\nMore.")
+    #expect(replacing([("", "a"), ("", "b")], in: "x") == nil)
+}

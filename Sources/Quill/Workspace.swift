@@ -61,7 +61,7 @@ final class Workspace {
     var model: ModelChoice?
     var models: [ModelChoice] = []
     @ObservationIgnored var showSettings: (Pane?) -> Void = { _ in }
-    var hasKey = Keychain.anthropicKey?.isEmpty == false
+    var keyed = Set(AgentSpec.all.filter { Keychain.key(for: $0.id) != nil }.map(\.id))
     var mode: Mode {
         didSet { Prefs.mode = mode }
     }
@@ -119,7 +119,8 @@ final class Workspace {
 
     func available(_ spec: AgentSpec) -> Bool? {
         switch spec.kind {
-        case .anthropic: return hasKey
+        case .anthropic: return keyed.contains(spec.id)
+        case .chat: return spec.keys.isEmpty || keyed.contains(spec.id)
         case .registry(_, _, false): return true
         default:
             let found = spec.binaries.map { installed[$0] }
@@ -166,7 +167,7 @@ final class Workspace {
     func warm() {
         let agent = agent
         Task {
-            try? await agent.prepare(cwd: Self.desk, readable: voiceSources)
+            try? await agent.prepare(cwd: Self.desk, readable: reachable)
             sync()
         }
         Task { try? await listener.prepare() }
@@ -407,6 +408,8 @@ final class Workspace {
         choreographer?.play(changes, as: .agent(turn: turn, flags: flags), turn: turn)
     }
 
+    var reachable: [URL] { voiceSources + (Guide.skill.map { [$0] } ?? []) }
+
     var voiceSources: [URL] {
         [vault] + Prefs.voiceSources.map { URL(fileURLWithPath: $0) }.filter { $0 != vault }
     }
@@ -483,11 +486,11 @@ final class Workspace {
                     guard let self, case .thinking(_, let w) = phase else { return }
                     phase = .thinking(note, words: w)
                 }
-                try await agent.prepare(cwd: Self.desk, readable: voiceSources)
+                try await agent.prepare(cwd: Self.desk, readable: reachable)
                 sync()
                 guard turn == id else { return }
                 let brief = agent.conversation == nil || agent.conversation != briefed
-                var body = prompt(request, canEditFiles: agent.canEditFiles, voice: voice, briefing: brief ? editorialGuide : nil)
+                var body = prompt(request, canEditFiles: agent.canEditFiles, voice: voice, briefing: brief ? Guide.briefing() : nil)
                 for attempt in 0..<2 {
                     try await agent.send(body, file: file, base: deskBase) { event in
                         guard self.turn == id else { return }

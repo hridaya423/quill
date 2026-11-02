@@ -233,6 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         let agents = NSMenu(title: "Co-writer")
         for (i, spec) in AgentSpec.all.enumerated() {
+            if spec.api, i > 0, !AgentSpec.all[i - 1].api { agents.addItem(.separator()) }
             let row = item(spec.name, #selector(chooseAgent(_:)), target: self, tag: i)
             row.image = Mark.image(spec, dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
             agents.addItem(row)
@@ -1073,13 +1074,17 @@ struct AgentBadge: View {
             Divider()
             Menu("Co-writer") {
                 Picker("Co-writer", selection: $ws.agentID) {
-                    ForEach(AgentSpec.all) { spec in
-                        Label {
-                            Text(spec.name)
-                        } icon: {
-                            if let image = Mark.image(spec, dark: false) { Image(nsImage: image) }
+                    ForEach([false, true], id: \.self) { api in
+                        Section(api ? "API keys" : "Agents") {
+                            ForEach(AgentSpec.all.filter { $0.api == api }) { spec in
+                                Label {
+                                    Text(spec.name)
+                                } icon: {
+                                    if let image = Mark.image(spec, dark: false) { Image(nsImage: image) }
+                                }
+                                .tag(spec.id)
+                            }
                         }
-                        .tag(spec.id)
                     }
                 }
                 .pickerStyle(.inline)

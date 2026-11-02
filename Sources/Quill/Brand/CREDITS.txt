@@ -4,3 +4,4 @@ mark-claude.svg, mark-codex.svg, mark-antigravity.png: provider icons as shipped
 mark-cursor*.svg, mark-fx*.svg, mark-grok*.svg, mark-opencode*.svg, mark-pi*.svg: provider icons (light and dark fills) as shipped in T3 Code's client bundle. Trademarks of their owners.
 mark-gemini.svg, mark-devin.svg: agent icons from the ACP registry (cdn.agentclientprotocol.com/registry/v1/latest). Trademarks of Google and Cognition.
 Check each owner's brand terms before release.
+mark-openrouter.svg, mark-groq.svg, mark-mistral.svg, mark-deepseek.svg, mark-ollama.svg: from lobehub/lobe-icons (@lobehub/icons-static-svg 1.73.0, MIT). Trademarks of their owners.

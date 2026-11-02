@@ -235,22 +235,31 @@ struct NotesSample: View {
 
 struct CowritersPane: View {
     @Bindable var ws: Workspace
-    @State private var key = Keychain.read("anthropic") ?? ""
+    @State private var key = ""
 
     private func saveKey() {
+        let id = ws.agentID
+        guard !ws.spec.keys.isEmpty else { return }
         let clean = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard clean != (Keychain.read("anthropic") ?? "") else { return }
-        Keychain.write("anthropic", clean)
-        ws.hasKey = Keychain.anthropicKey?.isEmpty == false
+        guard clean != (Keychain.read(id) ?? "") else { return }
+        Keychain.write(id, clean)
+        if Keychain.key(for: id) != nil { ws.keyed.insert(id) } else { ws.keyed.remove(id) }
+    }
+
+    private func grid(_ specs: [AgentSpec]) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            ForEach(specs) { spec in
+                Tile(spec: spec, on: ws.agentID == spec.id, available: ws.available(spec)) { ws.agentID = spec.id }
+            }
+        }
     }
 
     var body: some View {
-        Block(title: "Co-writer", note: "Quill signs in through the tool you pick, so your existing plan works.") {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                ForEach(AgentSpec.all) { spec in
-                    Tile(spec: spec, on: ws.agentID == spec.id, available: ws.available(spec)) { ws.agentID = spec.id }
-                }
-            }
+        Block(title: "Agents", note: "Quill signs in through the tool you pick, so your existing plan works.") {
+            grid(AgentSpec.all.filter { !$0.api })
+        }
+        Block(title: "API keys", note: "Pay per use with your own key. Keys stay in your Keychain.") {
+            grid(AgentSpec.all.filter(\.api))
         }
         Block(title: ws.spec.name, note: hint) {
             Card {
@@ -267,12 +276,12 @@ struct CowritersPane: View {
                         .fixedSize()
                     }
                 }
-                if ws.agentID == "anthropic" {
+                if !ws.spec.keys.isEmpty {
                     Hairline()
                     Row {
                         Text("API key").font(.system(size: 13)).foregroundStyle(Color.ink)
                     } trailing: {
-                        SecureField("", text: $key, prompt: Text("sk-ant-…"))
+                        SecureField("", text: $key, prompt: Text(ws.keyed.contains(ws.agentID) && key.isEmpty ? "From \(ws.spec.keys[0])" : "Paste your key"))
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 240)
                             .onSubmit(saveKey)
@@ -286,12 +295,16 @@ struct CowritersPane: View {
                 }
             }
         }
-        .onAppear { ws.checkAgents() }
+        .onAppear {
+            key = Keychain.read(ws.agentID) ?? ""
+            ws.checkAgents()
+        }
+        .onChange(of: ws.agentID) { key = Keychain.read(ws.agentID) ?? "" }
         .onDisappear(perform: saveKey)
     }
 
     private var hint: String? {
-        if ws.agentID == "anthropic" { return "Stored in your Keychain and sent only to Anthropic." }
+        if !ws.spec.keys.isEmpty { return "Your key is stored in the Keychain and sent only to \(ws.spec.name)." }
         guard let install = ws.spec.install else { return nil }
         return ws.available(ws.spec) == false || install.hasPrefix("Downloads") ? install : nil
     }
@@ -408,6 +421,19 @@ struct VoicePane: View {
                     }
                 }
                 .padding(.vertical, 4)
+                Hairline()
+                Row {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Writing guide").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
+                        Text(Guide.skill.map { "Quill's guide plus your prose skill, \($0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))" } ?? "Quill's editorial guide")
+                            .font(.system(size: 11.5)).foregroundStyle(Color.soft).lineLimit(1).truncationMode(.middle)
+                    }
+                } trailing: {
+                    if let skill = Guide.skill {
+                        Button("Open") { NSWorkspace.shared.open(skill.appending(path: "SKILL.md")) }
+                    }
+                }
+                .padding(.vertical, 4)
             }
         }
     }
@@ -506,7 +532,7 @@ struct Mark: View {
         let natural = image.size
         let side = max(natural.width, natural.height, 1)
         image.size = NSSize(width: size * natural.width / side, height: size * natural.height / side)
-        image.isTemplate = ["codex", "gemini", "devin"].contains(spec.mark)
+        image.isTemplate = ["codex", "gemini", "devin", "openrouter", "groq", "ollama"].contains(spec.mark)
         cache[key] = image
         return image
     }
