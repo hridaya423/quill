@@ -131,3 +131,8 @@ Research notes with sources: HIG, WWDC25, iA, Butterick, Rauno, Emil Kowalski, Z
 - Removed letterspaced small-caps labels (First proof, footers, folios, step label, sheet slug) and `Brand.caps`.
 - Primary button: sentence-case Garamond 19 medium on an ink rounded rectangle (radius 11) with a ↩ keycap chip.
 - Evidence: snapshots in scratchpad snap6 inspected; `swift test` passes.
+
+## Crash fix, 2026-11-02
+- Three crashes (10:28, 11:04, 11:18) raised in `_postWindowNeedsUpdateConstraints`: an NSHostingView requested constraint updates during a layout, update-constraints, or display pass. The 11:18 trace runs through the SwiftUI ScrollView the outline card inserted on hover.
+- Fix (fcd03fe): the card lists 14 sections around the current one with no ScrollView. Rail, status, and command bar hosts set `safeAreaRegions = []`.
+- Not reproduced in tests. `RailTests` stresses hover, jump, and scroll in an app-shaped window and checks margin clicks still reach the text. Live check: watch for new `Quill-*.ips` in DiagnosticReports.
