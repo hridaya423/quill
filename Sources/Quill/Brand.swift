@@ -2,13 +2,15 @@ import AppKit
 import SwiftUI
 
 enum Brand {
-    static let ink = Color(red: 0.106, green: 0.133, blue: 0.208)
-    static let sheet = Color(red: 0.137, green: 0.169, blue: 0.251)
-    static let paper = Color(red: 0.961, green: 0.941, blue: 0.902)
-    static let vermilion = Color(red: 0.878, green: 0.267, blue: 0.169)
-    static let soft = paper.opacity(0.62)
-    static let faint = paper.opacity(0.36)
-    static let rule = paper.opacity(0.1)
+    static let sky = Color(red: 183 / 255.0, green: 214 / 255.0, blue: 244 / 255.0)
+    static let blue = Color(red: 57 / 255.0, green: 104 / 255.0, blue: 153 / 255.0)
+    static let cloud = Color(red: 248 / 255.0, green: 250 / 255.0, blue: 252 / 255.0)
+    static let night = Color(red: 9 / 255.0, green: 16 / 255.0, blue: 25 / 255.0)
+    static let ink = Color(red: 20 / 255.0, green: 33 / 255.0, blue: 47 / 255.0)
+    static let slate = Color(red: 76 / 255.0, green: 95 / 255.0, blue: 115 / 255.0)
+    static let soft = cloud.opacity(0.68)
+    static let faint = cloud.opacity(0.4)
+    static let rule = cloud.opacity(0.12)
     static let ease = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.6)
     static let family = "EB Garamond"
 
@@ -18,7 +20,7 @@ enum Brand {
     }
 
     static func register() {
-        for name in ["EBGaramond.ttf", "EBGaramond-Italic.ttf", "InstrumentSerif.ttf", "InstrumentSerif-Italic.ttf"] {
+        for name in ["EBGaramond.ttf", "EBGaramond-Italic.ttf"] {
             if let url = url(name) { CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) }
         }
     }
@@ -27,18 +29,16 @@ enum Brand {
         .custom(family, size: size).weight(weight)
     }
 
-    static func display(_ size: CGFloat, italic: Bool = false) -> Font {
-        .custom(italic ? "InstrumentSerif-Italic" : "InstrumentSerif-Regular", fixedSize: size)
-    }
-
-    static func nsDisplay(_ size: CGFloat, italic: Bool = false) -> NSFont {
-        NSFont(name: italic ? "InstrumentSerif-Italic" : "InstrumentSerif-Regular", size: size) ?? .systemFont(ofSize: size)
+    static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
     }
 }
 
 struct QuillMark: View, Animatable {
     var progress: Double = 1
-    var ink: Color = Brand.paper
+    var ink: Color = Brand.blue
+    var frame: CGRect?
+    var outline = QuillMark.outline
 
     nonisolated var animatableData: Double {
         get { progress }
@@ -46,18 +46,19 @@ struct QuillMark: View, Animatable {
     }
 
     struct Shape: Decodable {
-        var vane: String
-        var nib: String
-        var from: [Double]
-        var to: [Double]
+        var path: String
+        var q: String
+        var uill: String
+        var wordmark: String
     }
 
     static let shape: Shape? = Brand.url("mark.json")
         .flatMap { try? Data(contentsOf: $0) }
         .flatMap { try? JSONDecoder().decode(Shape.self, from: $0) }
-    static let vane = shape.map { path($0.vane) } ?? Path()
-    static let nib = shape.map { path($0.nib) } ?? Path()
-    static let frame = vane.boundingRect.union(nib.boundingRect)
+    static let outline = shape.map { path($0.path) } ?? Path()
+    static let lettering = shape.map { path($0.wordmark) } ?? Path()
+    static let uill = shape.map { path($0.uill) } ?? Path()
+    static let capital = shape.map { path($0.q) } ?? Path()
 
     static func path(_ d: String) -> Path {
         var p = Path()
@@ -78,52 +79,72 @@ struct QuillMark: View, Animatable {
         return p
     }
 
+    static func ratio(_ path: Path) -> CGFloat {
+        let b = path.boundingRect
+        return b.height > 0 ? b.width / b.height : 1
+    }
+
     var body: some View {
-        Canvas { ctx, size in
-            guard let s = Self.shape else { return }
-            let f = Self.frame
-            let scale = min(size.width / f.width, size.height / f.height)
-            ctx.translateBy(x: (size.width - f.width * scale) / 2, y: (size.height - f.height * scale) / 2)
-            ctx.scaleBy(x: scale, y: scale)
-            ctx.translateBy(x: -f.minX, y: -f.minY)
-            let a = CGPoint(x: s.from[0], y: s.from[1]), b = CGPoint(x: s.to[0], y: s.to[1])
-            let length = hypot(b.x - a.x, b.y - a.y)
-            let reveal = min(1, progress / 0.82)
-            var drawn = ctx
-            drawn.translateBy(x: a.x, y: a.y)
-            drawn.rotate(by: .radians(atan2(b.y - a.y, b.x - a.x)))
-            drawn.clip(to: Path(CGRect(x: -40, y: -length, width: length * reveal + 40, height: length * 2)))
-            drawn.rotate(by: .radians(-atan2(b.y - a.y, b.x - a.x)))
-            drawn.translateBy(x: -a.x, y: -a.y)
-            drawn.fill(Self.vane, with: .color(ink), style: FillStyle(eoFill: true))
-            drawn.fill(Self.nib, with: .color(ink))
-            let dip = max(0, (progress - 0.82) / 0.18)
-            ctx.fill(Self.nib, with: .color(Brand.vermilion.opacity(progress >= 1 ? 1 : dip)))
+        let fill = min(1, max(0, (progress - 0.62) / 0.38))
+        ZStack {
+            BrandShape(outline: outline, frame: frame)
+                .trim(from: 0, to: min(1, progress / 0.8))
+                .stroke(ink, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+                .opacity(1 - fill)
+            BrandShape(outline: outline, frame: frame)
+                .fill(ink, style: FillStyle(eoFill: true))
+                .opacity(fill)
         }
-        .aspectRatio(Self.frame.width / Self.frame.height, contentMode: .fit)
+        .aspectRatio(frame.map { $0.width / $0.height } ?? Self.ratio(outline), contentMode: .fit)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Quill")
     }
 }
 
+struct QuillWordmark: View {
+    var ink: Color = Brand.blue
+
+    var body: some View {
+        BrandShape(outline: QuillMark.lettering)
+            .fill(ink, style: FillStyle(eoFill: true))
+            .aspectRatio(QuillMark.ratio(QuillMark.lettering), contentMode: .fit)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Quill")
+    }
+}
+
+struct BrandShape: SwiftUI.Shape {
+    var outline: Path
+    var frame: CGRect?
+
+    func path(in rect: CGRect) -> Path {
+        let bounds = frame ?? outline.boundingRect
+        let scale = min(rect.width / bounds.width, rect.height / bounds.height)
+        let transform = CGAffineTransform(translationX: rect.midX - bounds.midX * scale, y: rect.midY - bounds.midY * scale)
+            .scaledBy(x: scale, y: scale)
+        return outline.applying(transform)
+    }
+}
+
 struct Primary: View {
     var label: String
+    var fill: Color = .accentInk
+    var text: Color = Color(nsColor: Theme.onAccent)
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Text(label)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(Brand.display(14, .semibold))
                 Text("↩")
                     .font(.system(size: 11, weight: .semibold))
-                    .opacity(0.6)
+                    .opacity(0.55)
             }
-            .foregroundStyle(Color(nsColor: Theme.paper))
-            .padding(.horizontal, 18)
-            .frame(height: 36)
-            .background(Capsule().fill(Color.ink))
-            .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+            .foregroundStyle(text)
+            .padding(.horizontal, 20)
+            .frame(height: 38)
+            .background(Capsule().fill(fill))
         }
         .buttonStyle(Press())
         .keyboardShortcut(.defaultAction)

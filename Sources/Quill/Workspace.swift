@@ -74,6 +74,9 @@ final class Workspace {
     var mode: Mode {
         didSet { Prefs.mode = mode }
     }
+    var crew: [String] = Prefs.crew {
+        didSet { Prefs.crew = crew }
+    }
     var agentID: String {
         didSet {
             guard agentID != oldValue else { return }
@@ -99,6 +102,10 @@ final class Workspace {
     @ObservationIgnored private var held: [Tell] = []
     @ObservationIgnored private var proposed = false
     @ObservationIgnored private var briefed: String?
+    @ObservationIgnored var mates: [String: Agent] = [:]
+    @ObservationIgnored private var matesBriefed: [String: String] = [:]
+    @ObservationIgnored private var signed: String?
+    @ObservationIgnored private var absent: [String] = []
     @ObservationIgnored lazy var keeper = VoiceKeeper(vault: vault, spec: spec)
     @ObservationIgnored let listener = Listener()
     @ObservationIgnored var turnStarted: CFAbsoluteTime = 0
@@ -117,6 +124,19 @@ final class Workspace {
     }
 
     var spec: AgentSpec { AgentSpec.named(agentID) }
+
+    var company: [AgentSpec] {
+        crew.filter { $0 != agentID }.map(AgentSpec.named).filter { available($0) != false }
+    }
+
+    func toggle(mate id: String) {
+        if crew.contains(id) {
+            crew.removeAll { $0 == id }
+            mates.removeValue(forKey: id)?.shutdown()
+        } else {
+            crew.append(id)
+        }
+    }
 
     var recommended: [ModelChoice] {
         var picks = spec.picks.compactMap { id in models.first { $0.id == id } }
@@ -474,7 +494,7 @@ final class Workspace {
         if firstChangeAt == nil { firstChangeAt = CFAbsoluteTimeGetCurrent() }
         phase = .applying(editor.review.turn(turn).count + changes.count)
         if let first = changes.first { editor.present(editor.paragraph(at: first.range.location)) }
-        editor.play(changes, as: .agent(turn: turn, flags: flags), turn: turn)
+        editor.play(changes, as: .agent(turn: turn, flags: flags, by: signed), turn: turn)
     }
 
     var reachable: [URL] { voiceSources + (Guide.skill.map { [$0] } ?? []) }
@@ -536,7 +556,12 @@ final class Workspace {
         deskBase = text
         let sel = editor.selectedRange()
         let selection = sel.length > 0 ? (text as NSString).substring(with: sel) : nil
-        let request = Request(words: words, title: title, path: file.path, text: text, selection: selection, mode: mode)
+        let crewing = mode == .guided ? company : []
+        let links = Links.found(in: [words, selection ?? "", text])
+        var request = Request(words: words, title: title, path: file.path, text: text, selection: selection, mode: mode,
+                              peers: crewing.map(\.name))
+        signed = crewing.isEmpty ? nil : spec.name
+        absent = []
         busy = true
         turn += 1
         let id = turn
@@ -561,6 +586,16 @@ final class Workspace {
                 Registry.status = { [weak self] note in
                     guard let self, case .thinking(_, let w) = phase else { return }
                     phase = .thinking(note, words: w)
+                }
+                if !links.isEmpty {
+                    phase = .thinking(links.count == 1 ? "Reading the link" : "Reading \(links.count) links", words: words)
+                    let pages = await Links.read(links)
+                    request.sources = links.map { url in Request.Source(url: url.absoluteString, text: pages.first { $0.url == url }?.text ?? "") }
+                    guard turn == id else { return }
+                }
+                let lead = spec.name
+                let runs = crewing.map { mate in
+                    Task { await self.run(mate, request, title: title, voice: voice, peers: [lead] + crewing.filter { $0 != mate }.map(\.name)) }
                 }
                 try await agent.prepare(cwd: Self.desk, readable: reachable)
                 sync()
@@ -601,11 +636,79 @@ final class Workspace {
                     body = retryPrompt(held, canEditFiles: agent.canEditFiles)
                     held = []
                 }
+                if !runs.isEmpty {
+                    phase = .thinking("Waiting for \(crewing.map(\.name).joined(separator: " and "))", words: words)
+                    var versions: [(AgentSpec, String)] = []
+                    for run in runs { if let v = await run.value { versions.append(v) } }
+                    guard turn == id else { return }
+                    await stackCrew(versions, original: text)
+                }
             } catch {
                 failure = error.localizedDescription
             }
             guard turn == id else { return }
             await settleTurn(id: id, url: url, failure: failure, words: words, mode: mode)
+        }
+    }
+
+    private func run(_ mate: AgentSpec, _ request: Request, title: String, voice: String?, peers: [String]) async -> (AgentSpec, String)? {
+        let fm = FileManager.default
+        let dir = Ledger.dir.appending(path: "crew/\(mate.id)")
+        try? fm.removeItem(at: dir)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appending(path: "\(title).md")
+        guard (try? request.text.write(to: file, atomically: true, encoding: .utf8)) != nil else { return nil }
+        let agent = mates[mate.id] ?? mate.make()
+        mates[mate.id] = agent
+        var asked = request
+        asked.path = file.path
+        asked.peers = peers
+        var version = request.text
+        do {
+            try await agent.prepare(cwd: dir, readable: reachable)
+            let brief = agent.conversation == nil || agent.conversation != matesBriefed[mate.id]
+            let body = prompt(asked, canEditFiles: agent.canEditFiles, voice: voice, briefing: brief ? Guide.briefing() : nil)
+            try await agent.send(body, file: file, base: request.text) { event in
+                if case .proposed(let next) = event { version = next }
+            }
+            matesBriefed[mate.id] = agent.conversation
+        } catch {
+            Ledger.event("crew-failed", detail: "\(mate.id): \(error.localizedDescription)")
+            let why = error.localizedDescription.split(separator: ".").first.map { "\($0)." } ?? "it stopped."
+            absent.append("\(mate.name) couldn't answer: \(why)")
+            return nil
+        }
+        if agent.canEditFiles, let disk = try? String(contentsOf: file, encoding: .utf8) { version = disk }
+        return version == request.text ? nil : (mate, version)
+    }
+
+    private func stackCrew(_ versions: [(AgentSpec, String)], original: String) async {
+        reconcileDesk()
+        while editor?.isPlaying == true || settle != nil { try? await Task.sleep(for: .milliseconds(50)) }
+        guard let editor, !versions.isEmpty else { return }
+        let combined = stack(base: original, versions: [deskBase] + versions.map(\.1))
+        let changes = merge(base: deskBase, current: editor.text, proposed: combined)
+        deskBase = combined
+        if let deskFile { try? combined.write(to: deskFile, atomically: true, encoding: .utf8) }
+        guard !changes.isEmpty else { return }
+        proposed = true
+        if firstChangeAt == nil { firstChangeAt = CFAbsoluteTimeGetCurrent() }
+        let authors = changes.map { change -> String in
+            let added = change.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return versions.first { !added.isEmpty && $0.1.contains(added) }?.0.name ?? versions[0].0.name
+        }
+        var placed: [Change] = []
+        for name in versions.map(\.0.name) {
+            let mine = zip(changes, authors).filter { $0.1 == name }.map(\.0)
+            guard !mine.isEmpty else { continue }
+            let moved = mine.map { c -> Change in
+                let shift = placed.filter { $0.range.location < c.range.location }.reduce(0) { $0 + $1.text.utf16.count - $1.range.length }
+                return Change(range: NSRange(location: c.range.location + shift, length: c.range.length), text: c.text)
+            }
+            phase = .applying(editor.review.turn(turn).count + moved.count)
+            editor.play(moved, as: .agent(turn: turn, flags: [], by: name), turn: turn)
+            while editor.isPlaying { try? await Task.sleep(for: .milliseconds(50)) }
+            placed += mine
         }
     }
 
@@ -644,8 +747,9 @@ final class Workspace {
             return
         }
         let summary = said.isEmpty ? (pending == 0 ? "Nothing to change." : pending == 1 ? "1 change." : "\(pending) changes.") : said
-        transcript[url, default: []].append(Line(words: words, reply: summary))
-        phase = said.isEmpty ? .done(pending) : .said(said)
+        let full = ([absent.isEmpty ? said : summary] + absent).filter { !$0.isEmpty }.joined(separator: " ")
+        transcript[url, default: []].append(Line(words: words, reply: absent.isEmpty ? summary : full))
+        phase = full.isEmpty ? .done(pending) : .said(full)
     }
 
     private func focus(_ passage: String) {
@@ -749,6 +853,7 @@ final class Workspace {
     func endTurn() {
         guard busy else { return }
         agent.cancel()
+        mates.values.forEach { $0.cancel() }
         let id = turn
         turn += 1
         settle?.cancel()

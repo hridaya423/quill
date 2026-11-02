@@ -5,7 +5,7 @@ import QuillCore
 @testable import Quill
 
 @MainActor
-final class ScriptedAgent: Agent {
+class ScriptedAgent: Agent {
     let canEditFiles = true
     let conversation: String? = "scripted"
     let model: ModelChoice? = nil
@@ -70,6 +70,76 @@ struct LoopTests {
     func until(_ done: () -> Bool) async {
         for _ in 0..<200 where !done() { try? await Task.sleep(for: .milliseconds(20)) }
         #expect(done())
+    }
+
+    @Test(.enabled(if: support != nil && ProcessInfo.processInfo.environment["QUILL_CREW"] != nil), .timeLimit(.minutes(8)))
+    func liveCrewFillsAnOutlineFromALink() async throws {
+        let outline = "# Event ideas\n\nBrief: https://lu.ma/dm9hcg5q\n\n## Ideas\n\n- Scent personality quiz at check-in\n  - Pros:\n  - Cons:\n-\n  - Pros:\n  - Cons:\n-\n  - Pros:\n  - Cons:\n"
+        let (ws, text, note) = try await setup(ScriptedAgent([]))
+        defer { ws.quit() }
+        ws.agentID = "codex"
+        ws.agentID = "claude"
+        try outline.write(to: note, atomically: true, encoding: .utf8)
+        ws.open(note)
+        text.load(outline)
+        ws.crew = ["codex"]
+        defer { ws.crew = [] }
+        ws.ask("fill in the ideas with pros and cons for this event")
+        for _ in 0..<9000 where ws.busy { try? await Task.sleep(for: .milliseconds(50)) }
+        await ws.editor?.settled()
+        Swift.print("<<<\(text.text)>>>\nBY \(ws.review.hunks.map { ($0.by ?? "-") + ": " + $0.new.prefix(60) })\nPHASE \(ws.phase)")
+        if case .said(let s) = ws.phase, s.contains("couldn't answer") {
+            Swift.print("CREW MATE UNAVAILABLE: \(s)")
+        } else {
+            #expect(Set(ws.review.hunks.compactMap(\.by)).count == 2)
+        }
+        #expect(text.text.contains("- Scent personality quiz at check-in"))
+    }
+
+    @Test(.enabled(if: support != nil)) func aCrewMateThatFailsIsNamedInTheReply() async throws {
+        final class Broke: ScriptedAgent {
+            override func send(_ prompt: String, file: URL?, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
+                throw NSError(domain: "codex", code: 1, userInfo: [NSLocalizedDescriptionKey: "You’ve hit your usage limit. Upgrade to Pro"])
+            }
+        }
+        let lead = ScriptedAgent([{ $0.replacingOccurrences(of: "Writers lose hours to editing.", with: "Writers lose hours to editing. Quill gives them back.") }])
+        let (ws, _, _) = try await setup(lead)
+        defer { ws.quit() }
+        ws.crew = ["codex"]
+        ws.mates["codex"] = Broke([])
+        defer { ws.crew = [] }
+        ws.ask("add a line")
+        await settle(ws)
+        guard case .said(let s) = ws.phase else {
+            Issue.record("no reply: \(ws.phase)")
+            return
+        }
+        #expect(s.hasSuffix("Codex couldn't answer: You’ve hit your usage limit."))
+        #expect(ws.review.hunks.count == 1)
+    }
+
+    @Test(.enabled(if: support != nil)) func crewAnswersStackSignedUnderTheWritersOutline() async throws {
+        let outline = "# Hackathon ideas\n\n- AR study buddy\n  - Pros: works offline\n  - Cons:\n-\n"
+        let lead = ScriptedAgent([{ $0.replacingOccurrences(of: "\n-\n", with: "\n- Voice-first lecture notes\n  - Pros: hands-free\n") }])
+        let mate = ScriptedAgent([{ $0.replacingOccurrences(of: "\n-\n", with: "\n- Peer-review marketplace\n  - Pros: network effects\n") }])
+        let (ws, text, note) = try await setup(lead)
+        defer { ws.quit() }
+        try outline.write(to: note, atomically: true, encoding: .utf8)
+        ws.open(note)
+        text.load(outline)
+        ws.crew = ["codex"]
+        ws.mates["codex"] = mate
+        defer { ws.crew = [] }
+        ws.ask("fill in more ideas with pros and cons")
+        await settle(ws)
+        #expect(text.text.contains("- AR study buddy\n  - Pros: works offline"))
+        #expect(text.text.contains("- Voice-first lecture notes"))
+        #expect(text.text.contains("- Peer-review marketplace"))
+        let by = Set(ws.review.hunks.compactMap(\.by))
+        #expect(by == ["Claude Code", "Codex"])
+        #expect(lead.prompts.first?.contains("Other co-writers (Codex)") == true)
+        #expect(mate.prompts.first?.contains("Other co-writers (Claude Code)") == true)
+        #expect(mate.prompts.first?.contains("fill those slots in place") == true)
     }
 
     @Test(.enabled(if: support != nil)) func keptChangesReachTheVaultOnlyAfterReview() async throws {

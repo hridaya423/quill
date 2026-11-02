@@ -52,6 +52,11 @@ enum Prefs {
         set { store.set(newValue, forKey: "last") }
     }
 
+    static var crew: [String] {
+        get { store.stringArray(forKey: "crew") ?? [] }
+        set { store.set(newValue, forKey: "crew") }
+    }
+
     static var mode: Mode {
         get { Mode(rawValue: store.string(forKey: "mode") ?? "") ?? .guided }
         set { store.set(newValue.rawValue, forKey: "mode") }

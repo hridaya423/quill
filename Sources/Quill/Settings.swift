@@ -215,7 +215,7 @@ struct GuidedSample: View {
         HStack(alignment: .top, spacing: 10) {
             Capsule().fill(Color.accentInk.opacity(0.6)).frame(width: 2, height: 18).padding(.top, 3)
             (Text("We ") + Text("build").underline(true, color: Color.accentInk.opacity(0.6)) + Text(" a tool that helps people write."))
-                .font(.serif(15)).foregroundStyle(Color.ink).lineSpacing(2)
+                .font(.voice(15)).foregroundStyle(Color.ink).lineSpacing(2)
         }
     }
 }
@@ -224,10 +224,10 @@ struct NotesSample: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             (Text("We are ") + Text("basically").underline(true, color: Color.accentInk.opacity(0.5)) + Text(" building a tool."))
-                .font(.serif(15)).foregroundStyle(Color.ink).lineSpacing(2)
+                .font(.voice(15)).foregroundStyle(Color.ink).lineSpacing(2)
             HStack(alignment: .top, spacing: 6) {
                 Rectangle().fill(Color.accentInk).frame(width: 1.5, height: 32)
-                Text("Cut the hedge.").font(.serif(13).italic()).foregroundStyle(Color.soft).fixedSize()
+                Text("Cut the hedge.").font(.voice(13).italic()).foregroundStyle(Color.soft).fixedSize()
             }
         }
     }
@@ -263,6 +263,33 @@ struct CowritersPane: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
                 ForEach(AgentSpec.all) { spec in
                     Tile(spec: spec, on: ws.agentID == spec.id, available: ws.available(spec)) { ws.agentID = spec.id }
+                }
+            }
+        }
+        Block(title: "Also ask", note: "These answer every edit request alongside \(ws.spec.name). Their ideas land in your note under yours, signed, so you keep the ones you like.") {
+            Flow(gap: 6, leading: 36, centered: false) {
+                ForEach(AgentSpec.all.filter { $0.id != ws.agentID }) { spec in
+                    let mate = ws.crew.contains(spec.id)
+                    let ready = ws.available(spec) != false
+                    Button { ws.toggle(mate: spec.id) } label: {
+                        HStack(spacing: 7) {
+                            Mark(spec: spec, size: 13)
+                            Text(spec.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.ink)
+                            Image(systemName: mate ? "checkmark.circle.fill" : "plus.circle")
+                                .font(.system(size: 12))
+                                .foregroundStyle(mate ? Color.accentInk : Color.faint)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(Capsule().fill(mate ? Color.accentInk.opacity(0.08) : Color.sheet.opacity(0.7)))
+                        .overlay(Capsule().strokeBorder(mate ? Color.accentInk : Color.rule, lineWidth: mate ? 1.2 : 1))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(Press())
+                    .disabled(!ready)
+                    .opacity(ready ? 1 : 0.5)
+                    .help(ready ? (mate ? "Stop asking \(spec.name)" : "Also ask \(spec.name)") : spec.missing)
+                    .accessibilityAddTraits(mate ? .isSelected : [])
                 }
             }
         }

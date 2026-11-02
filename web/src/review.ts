@@ -3,7 +3,7 @@ import { Decoration, EditorView, ViewPlugin, type ViewUpdate } from '@codemirror
 import { local, place, post } from './bridge';
 
 export type HunkSpec = { id: number; from: number; to: number; flagged: boolean };
-export type CardSpec = { id: number; from: number; to: number; old: string; flags: string[] };
+export type CardSpec = { id: number; from: number; to: number; old: string; flags: string[]; by: string | null };
 type Hunks = { list: HunkSpec[]; focused: number | null };
 
 export const setHunks = StateEffect.define<Hunks>();
@@ -101,6 +101,7 @@ const gloss = ViewPlugin.fromClass(
         el.className = 'cm-gloss';
         el.setAttribute('role', 'group');
         el.setAttribute('aria-label', spec.old ? `Replaced: ${spec.old}` : 'Added text');
+        if (spec.by) text(el, 'div', 'cm-gloss-by', spec.by);
         if (spec.old) text(el, 'div', 'cm-gloss-old', spec.old);
         else text(el, 'div', 'cm-gloss-added', 'Added');
         for (const flag of spec.flags) text(el, 'div', 'cm-gloss-flag', flag);

@@ -363,6 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let run = Firstrunner(current: ws.vault)
         let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { [weak self] picked in self?.landed(picked) })
         host.sizingOptions = []
+        host.appearance = NSAppearance(named: .darkAqua)
         host.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(host)
         NSLayoutConstraint.activate([
@@ -927,6 +928,14 @@ struct Sidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                QuillWordmark(ink: .accentInk).frame(height: 21)
+                Spacer()
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .accessibilityAddTraits(.isHeader)
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Color.soft)
                 TextField("Search notes", text: $query)
@@ -957,7 +966,7 @@ struct Sidebar: View {
             .padding(.top, 6)
             .padding(.bottom, 4)
             Text(ws.title)
-                .font(Brand.display(21))
+                .font(Brand.display(12.5))
                 .foregroundStyle(Color.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -976,7 +985,7 @@ struct Sidebar: View {
                             chrome.searching = false
                         } label: {
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(note.title).font(.serif(15, .medium)).foregroundStyle(Color.ink).lineLimit(1)
+                                Text(note.title).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink).lineLimit(1)
                                 Text(place(note)).font(.system(size: 11)).foregroundStyle(Color.soft).lineLimit(1)
                             }
                             .padding(.vertical, 2)
@@ -1105,7 +1114,7 @@ struct Branch: View {
                 Branch(folder: sub, ws: ws, open: $open, rename: rename)
             } label: {
                 Label {
-                    Text(sub.name).font(.serif(15)).foregroundStyle(Color.ink).lineLimit(1)
+                    Text(sub.name).font(.system(size: 13)).foregroundStyle(Color.ink).lineLimit(1)
                 } icon: {
                     Image(systemName: "folder").font(.system(size: 12, weight: .light)).foregroundStyle(Color.soft)
                 }
@@ -1137,7 +1146,7 @@ struct NoteRow: View {
         Button(action: open) {
             HStack(spacing: 8) {
                 Label {
-                    Text(note.title).font(.serif(15, current ? .medium : .regular)).foregroundStyle(Color.ink).lineLimit(1)
+                    Text(note.title).font(.system(size: 13, weight: current ? .semibold : .regular)).foregroundStyle(Color.ink).lineLimit(1)
                 } icon: {
                     Image(systemName: "doc.text").font(.system(size: 12, weight: .light)).foregroundStyle(current ? Color.ink : Color.soft)
                 }
@@ -1165,15 +1174,19 @@ struct EmptyState: View {
     var ws: Workspace
     var body: some View {
         if ws.current == nil {
-            VStack(spacing: 10) {
+            VStack(spacing: 18) {
+                QuillMark(ink: Color.accentInk.opacity(0.22)).frame(height: 92)
+                    .padding(.bottom, 6)
                 Text(ws.notes.isEmpty ? "No notes yet" : "No note open")
-                    .font(.serif(24, .medium)).foregroundStyle(Color.ink)
+                    .font(Brand.display(17, .medium)).foregroundStyle(Color.ink)
                 Button { ws.create() } label: {
-                    HStack(spacing: 6) { Text("New note"); Keycap("⌘N") }
+                    HStack(spacing: 8) { Text("New note"); Text("⌘N").opacity(0.6) }
+                        .padding(.horizontal, 18).frame(height: 36)
+                        .foregroundStyle(Color(nsColor: Theme.onAccent))
+                        .background(Capsule().fill(Color.accentInk))
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundStyle(Color.soft)
+                .buttonStyle(Press())
+                .font(Brand.display(13.5, .semibold))
             }
         }
     }
@@ -1199,7 +1212,8 @@ struct AgentBadge: View {
     }
 
     private var detail: String {
-        [ws.model?.name, ws.mode == .notes ? "Notes" : nil].compactMap { $0 }.joined(separator: " · ")
+        [ws.model?.name, ws.mode == .notes ? "Notes" : nil, ws.company.isEmpty ? nil : "with " + ws.company.map(\.name).joined(separator: ", ")]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 
     var body: some View {
@@ -1237,6 +1251,18 @@ struct AgentBadge: View {
                 .pickerStyle(.inline)
                 .labelsHidden()
             }
+            Menu("Also Ask") {
+                ForEach(AgentSpec.all.filter { $0.id != ws.agentID }) { spec in
+                    Toggle(isOn: Binding(get: { ws.crew.contains(spec.id) }, set: { _ in ws.toggle(mate: spec.id) })) {
+                        Label {
+                            Text(spec.name)
+                        } icon: {
+                            if let image = Mark.image(spec, dark: false) { Image(nsImage: image) }
+                        }
+                    }
+                    .disabled(ws.available(spec) == false)
+                }
+            }
             Button("Settings…") { settings(nil) }
         } label: {
             HStack(spacing: 9) {
@@ -1255,6 +1281,7 @@ struct AgentBadge: View {
                         .font(.system(size: 11)).foregroundStyle(note == nil ? Color.soft : dot)
                 }
                 .lineLimit(1)
+                .layoutPriority(1)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .semibold))
@@ -1274,6 +1301,6 @@ struct AgentBadge: View {
         .padding(.horizontal, 10)
         .padding(.bottom, 10)
         .help("Co-writer, model, and how it answers")
-        .accessibilityLabel("\(ws.spec.name), \(note ?? detail)")
+        .accessibilityLabel("\(ws.spec.name)\(ws.company.isEmpty ? "" : ", also asking " + ws.company.map(\.name).joined(separator: ", ")), \(note ?? detail)")
     }
 }

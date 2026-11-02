@@ -190,13 +190,19 @@ struct Snapshots {
             let pitch = editor.text.buffer
             let hedge = pitch.range(of: "We are basically trying to kind of build a tool that maybe helps people write better, in a way.")
             if hedge.location != NSNotFound {
-                editor.text.play([Change(range: hedge, text: "We are building a tool that helps people write better.")], as: .agent(turn: 1, flags: []), turn: 1)
+                editor.text.play([Change(range: hedge, text: "We are building a tool that helps people write better.")], as: .agent(turn: 1, flags: [], by: "Codex"), turn: 1)
                 await editor.text.settled()
                 ws.phase = .said("Cut the hedges from the opening.")
                 await shot("review")
                 ws.phase = .idle
                 editor.text.setSelectedRange(NSRange(location: hedge.location + 4, length: 0))
                 await shot("review-card")
+                ws.installed["codex"] = true
+                ws.crew = ["codex", "cursor"]
+                editor.chrome.commanding = true
+                await shot("crew-command")
+                editor.chrome.commanding = false
+                ws.crew = []
                 ws.revert()
                 try? await Task.sleep(for: .milliseconds(200))
                 let again2 = editor.text.buffer.range(of: "kind of build")
@@ -241,6 +247,38 @@ struct Snapshots {
             try? await Task.sleep(for: .milliseconds(300))
             await Self.render(api, "settings-api", dark: dark)
             ws.agentID = "claude"
+            ws.crew = ["codex"]
+            let crewPane = NSHostingView(rootView: PaneView(pane: .cowriters, ws: ws, chrome: editor.chrome))
+            crewPane.frame = NSRect(origin: .zero, size: crewPane.fittingSize)
+            let cw = Self.window(crewPane.fittingSize, dark: dark)
+            cw.contentView = crewPane
+            try? await Task.sleep(for: .milliseconds(300))
+            await Self.render(crewPane, "settings-crew", dark: dark)
+            ws.crew = []
+            ws.current = nil
+            editor.text.load("")
+            ws.phase = .idle
+            await shot("empty")
+            if let first = ws.notes.first(where: { $0.title == "pitch" }) { ws.open(first.url) }
+            w.setContentSize(NSSize(width: 680, height: 600))
+            await shot("compact")
+        }
+    }
+
+    @Test(.enabled(if: dir != nil)) func stage() throws {
+        #expect(Stage.library != nil)
+        for (dawn, name) in [(0.35, "rising"), (1.0, "dawn"), (0.62, "setup")] {
+            let renderer = ImageRenderer(content: Stage(dawn: dawn, drift: 0).frame(width: 1240, height: 820))
+            renderer.scale = 2
+            guard let image = renderer.cgImage, let dir = Self.dir else { continue }
+            let rep = NSBitmapImageRep(cgImage: image)
+            try rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appending(path: "stage-\(name).png"))
+        }
+        let pitch = ImageRenderer(content: ZStack { Stage(dawn: 0.62, drift: 220); Pitch(place: "Obsidian Vault", notes: 561) }
+            .frame(width: 1000, height: 620).environment(\.colorScheme, .dark))
+        pitch.scale = 2
+        if let image = pitch.cgImage, let dir = Self.dir {
+            try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appending(path: "stage-pitch.png"))
         }
     }
 
@@ -255,22 +293,24 @@ struct Snapshots {
             ]
             run.chosen = run.places[1].url
             run.sentence = (text: "I think the second draft is basically better, but the ending maybe still needs a kind of sharper turn.", source: "Essay notes")
-            let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { _ in })
+            let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { _ in }.background(Brand.night))
             host.sizingOptions = []
             let w = Self.window(NSSize(width: 1240, height: 820), dark: dark)
             w.contentView = host
             host.frame = NSRect(x: 0, y: 0, width: 1240, height: 820)
             run.count()
             if !dark {
-                for (wait, name) in [(1200, "a-mark"), (1500, "b-word"), (1900, "c-sentence"), (1500, "d-listen"), (1000, "e-strike"), (1300, "f-kept")] {
+                for (wait, name) in [(900, "a-dawn"), (900, "a-mark"), (1400, "b-word"), (2600, "c-sentence"), (1200, "d-listen"), (1000, "e-strike"), (2000, "f-kept")] {
                     try? await Task.sleep(for: .milliseconds(wait))
                     await Self.render(host, "onboard-0\(name)", dark: dark)
                 }
-                try? await Task.sleep(for: .milliseconds(3000))
+                try? await Task.sleep(for: .milliseconds(1500))
             } else {
                 run.step = .folder
                 try? await Task.sleep(for: .milliseconds(1500))
             }
+            run.step = .folder
+            try? await Task.sleep(for: .milliseconds(800))
             await Self.render(host, "onboard-1-folder", dark: dark)
             run.lines = describe(fingerprint(["i don't know. so this is pretty much it: the thing works, mostly. we ship it tomorrow (maybe)."]))
             run.read = true
@@ -278,6 +318,8 @@ struct Snapshots {
             try? await Task.sleep(for: .milliseconds(1200))
             await Self.render(host, "onboard-2-voice", dark: dark)
             run.step = .talk
+            try? await Task.sleep(for: .milliseconds(1000))
+            await Self.render(host, "onboard-3-talk-idle", dark: dark)
             run.holding = true
             run.level = 0.6
             run.heard = "make the ending land harder"
@@ -288,8 +330,11 @@ struct Snapshots {
             ws.installed = ["npx": true, "codex": true, "gemini": false, "opencode": false]
             ws.models = [ModelChoice(id: "default", name: "Opus 4.8 (default)"), ModelChoice(id: "opus", name: "Opus 5.5")]
             ws.model = ws.models[1]
+            ws.crew = ["codex"]
             run.step = .cowriter
-            try? await Task.sleep(for: .milliseconds(1000))
+            try? await Task.sleep(for: .milliseconds(1300))
+            await Self.render(host, "onboard-4-cowriter-striking", dark: dark)
+            try? await Task.sleep(for: .milliseconds(1400))
             await Self.render(host, "onboard-4-cowriter", dark: dark)
         }
     }

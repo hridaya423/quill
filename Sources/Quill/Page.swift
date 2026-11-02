@@ -3,7 +3,7 @@ import QuillCore
 import WebKit
 
 enum EditSource {
-    case agent(turn: Int, flags: [String])
+    case agent(turn: Int, flags: [String], by: String? = nil)
     case other
 }
 
@@ -115,7 +115,7 @@ final class Page: WKWebView {
 
     func card(_ hunk: Hunk?) {
         guard let hunk else { return call("quill.card(null, \(version))") }
-        let spec: [String: Any] = ["id": hunk.id, "from": hunk.range.location, "to": NSMaxRange(hunk.range), "old": hunk.old, "flags": hunk.flags]
+        let spec: [String: Any] = ["id": hunk.id, "from": hunk.range.location, "to": NSMaxRange(hunk.range), "old": hunk.old, "flags": hunk.flags, "by": hunk.by ?? NSNull()]
         call("quill.card(\(json(spec)), \(version))")
     }
 
@@ -137,7 +137,7 @@ final class Page: WKWebView {
         let ordered = changes.sorted { $0.range.location < $1.range.location }
         var token: Int?
         var group: Int?
-        if case .agent(let turn, let flags) = source {
+        if case .agent(let turn, let flags, let by) = source {
             group = turn
             let copy = NSMutableString(string: buffer)
             var next = review
@@ -146,7 +146,7 @@ final class Page: WKWebView {
                 let r = NSRange(location: c.range.location + shift, length: c.range.length)
                 let before = NSString(string: copy)
                 copy.replaceCharacters(in: r, with: c.text)
-                next.agent(r, before: before, after: NSString(string: copy), turn: turn, flags: flags)
+                next.agent(r, before: before, after: NSString(string: copy), turn: turn, flags: flags, by: by)
                 shift += c.text.utf16.count - c.range.length
             }
             token = remember("Changes", before: review, after: next)

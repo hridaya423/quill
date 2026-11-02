@@ -68,3 +68,12 @@ let pitch = "# Lumen\n\nWe are basically trying to build a tool.\n\nWriters lose
     #expect(crisp("Strong opening. The middle drags. Cut the second list. End on the image. Done.", sentences: 3) == "Strong opening. The middle drags. Cut the second list.")
     #expect(crisp("Short.", sentences: 3) == "Short.")
 }
+
+@Test func linkedPagesBriefTheCoWriterAndUnreadOnesAreNamed() {
+    let r = Request(words: "fill the ideas", title: "Hack", path: "/tmp/Hack.md", text: "- idea", selection: nil, mode: .guided,
+                    sources: [.init(url: "https://lu.ma/x", text: "Theme: climate"), .init(url: "https://docs.google.com/document/d/1/edit", text: "")])
+    let p = prompt(r, canEditFiles: true)
+    #expect(p.contains("<source url=\"https://lu.ma/x\">\nTheme: climate\n</source>"))
+    #expect(p.contains("Quill couldn't open https://docs.google.com/document/d/1/edit"))
+    #expect(!p.contains("Other co-writers"))
+}

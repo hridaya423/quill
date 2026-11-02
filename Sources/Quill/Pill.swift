@@ -11,8 +11,8 @@ extension Color {
 }
 
 extension Font {
-    static func serif(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        Brand.serif(size, weight)
+    static func voice(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        Brand.display(size - 2, weight)
     }
 }
 
@@ -95,20 +95,20 @@ struct Pill: View {
 
     private func coach(_ source: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("This sentence is yours, from “\(source)”. Hold \(Prefs.talkKey.label) and say what you'd change.")
-                .font(.serif(18)).foregroundStyle(Color.ink).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+            Text("Try it on \(source). Hold \(Prefs.talkKey.label) and say what you'd change, like “make it direct”.")
+                .font(.voice(18)).foregroundStyle(Color.ink).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Button {
                     ws.ask("Make this sentence say what I mean, in my voice.", mode: .guided)
                 } label: {
                     HStack(spacing: 8) {
-                        Text("Make it say what I mean").font(.serif(17, .medium))
+                        Text("Make it say what I mean").font(.voice(17, .medium))
                         Text("⌘↩").font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    .foregroundStyle(Color(nsColor: Theme.paper))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.ink))
+                    .foregroundStyle(Color(nsColor: Theme.onAccent))
+                    .padding(.horizontal, 16)
+                    .frame(height: 34)
+                    .background(Capsule().fill(Color.accentInk))
                 }
                 .buttonStyle(Press())
                 .keyboardShortcut(.return, modifiers: .command)
@@ -135,7 +135,7 @@ struct Pill: View {
     private var reviewRow: some View {
         HStack(spacing: 14) {
             Text(pending == 1 ? "1 change" : "\(pending) changes")
-                .font(.serif(17)).foregroundStyle(Color.ink)
+                .font(.system(size: 14, weight: .medium)).foregroundStyle(Color.ink)
                 .contentTransition(.numericText())
             if pending > 1 { HStack(spacing: 0) {
                 Button { ws.step(false) } label: { Image(systemName: "chevron.left").frame(width: 22, height: 22).contentShape(Rectangle()) }
@@ -154,9 +154,9 @@ struct Pill: View {
                 .buttonStyle(.plain).foregroundStyle(Color.soft)
                 .help("Put back every change (⇧⌘⌫)")
             Button { ws.keep() } label: {
-                Text("Keep all").foregroundStyle(Color(nsColor: Theme.paper))
+                Text("Keep all").foregroundStyle(Color(nsColor: Theme.onAccent))
                     .padding(.horizontal, 11).padding(.vertical, 4)
-                    .background(Capsule().fill(Color.ink))
+                    .background(Capsule().fill(Color.accentInk))
             }
             .buttonStyle(Press())
             .help("Keep every change (⇧⌘↩)")
@@ -170,7 +170,7 @@ struct Pill: View {
         HStack(spacing: 12) {
             Waveform(level: ws.level)
             Text(text.isEmpty ? "Listening…" : text)
-                .font(.serif(17))
+                .font(.voice(17))
                 .foregroundStyle(text.isEmpty ? Color.soft : Color.ink)
                 .lineLimit(1)
                 .truncationMode(.head)
@@ -192,7 +192,7 @@ struct Pill: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Presence().alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
                 Text(ws.live.isEmpty ? activity : ws.live)
-                    .font(.serif(17).italic(ws.live.isEmpty))
+                    .font(.voice(17).italic(ws.live.isEmpty))
                     .foregroundStyle(ws.live.isEmpty ? Color.soft : Color.ink)
                     .lineLimit(3)
                     .truncationMode(.head)
@@ -206,7 +206,7 @@ struct Pill: View {
 
     private func done(_ n: Int) -> some View {
         Text(n == 0 ? "Nothing to change" : n == 1 ? "1 change" : "\(n) changes")
-            .font(.serif(17)).foregroundStyle(Color.soft)
+            .font(.voice(17)).foregroundStyle(Color.soft)
             .fixedSize()
     }
 
@@ -263,7 +263,7 @@ struct Pill: View {
                     ForEach(lines) { line in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(line.words).font(.system(size: 12)).foregroundStyle(Color.soft).lineLimit(1)
-                            Text((try? AttributedString(markdown: line.reply, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(line.reply)).font(.serif(15)).foregroundStyle(line.failed ? Color.redInk : Color.ink)
+                            Text((try? AttributedString(markdown: line.reply, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(line.reply)).font(.voice(15)).foregroundStyle(line.failed ? Color.redInk : Color.ink)
                                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -278,7 +278,7 @@ struct Pill: View {
                             HStack(spacing: 8) {
                                 Image(systemName: m.folder ? "folder" : "doc.text")
                                     .font(.system(size: 11)).foregroundStyle(Color.soft).frame(width: 14)
-                                Text(m.url.deletingPathExtension().lastPathComponent).font(.serif(15)).foregroundStyle(Color.ink).lineLimit(1)
+                                Text(m.url.deletingPathExtension().lastPathComponent).font(.voice(15)).foregroundStyle(Color.ink).lineLimit(1)
                                 Text((m.insert.trimmingCharacters(in: CharacterSet(charactersIn: " /")) as NSString).deletingLastPathComponent).font(.system(size: 11)).foregroundStyle(Color.soft)
                                     .lineLimit(1).truncationMode(.head)
                                 Spacer(minLength: 0)
@@ -306,9 +306,9 @@ struct Pill: View {
                         .background(Capsule().fill(Color.accentInk.opacity(0.12)))
                         .help("Your request is about the selected text")
                 }
-                TextField(chrome.selectedWords > 0 ? "Ask about the selection…" : "Ask Quill to change or check something…", text: $chrome.draft)
+                TextField(chrome.selectedWords > 0 ? "Ask about the selection…" : ws.company.isEmpty ? "Ask Quill to change or check something…" : "Ask \(([ws.spec] + ws.company).map(\.name).joined(separator: ", "))…", text: $chrome.draft)
                     .textFieldStyle(.plain)
-                    .font(.serif(18))
+                    .font(.voice(18))
                     .foregroundStyle(Color.ink)
                     .focused($focused)
                     .frame(width: chrome.selectedWords > 0 ? 380 : 440)
@@ -470,7 +470,7 @@ struct Reply: View {
 
     private func prose(_ limit: Int?) -> some View {
         Text(styled)
-            .font(.serif(17))
+            .font(.voice(17))
             .foregroundStyle(Color.ink)
             .lineSpacing(3)
             .lineLimit(limit)

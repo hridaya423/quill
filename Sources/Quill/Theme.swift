@@ -14,18 +14,19 @@ enum Theme {
         }
     }
 
-    static let paper = color(0xF6F2EA, 0x121725)
-    static let sheet = color(0xEEE9DF, 0x1A2032)
-    static let ink = color(0x1B2235, 0xE8E4DB)
-    static let soft = color(0x5D6475, 0xA9AFBF)
-    static let faint = color(0xB9BAC0, 0x454C5E)
-    static let rule = color(0xE2DDD3, 0x262D40)
-    static let accent = color(0xC23A22, 0xF07A62)
-    static let red = accent
-    static let green = color(0x56805F, 0x86B990)
+    static let paper = color(0xF8FAFC, 0x0E1620)
+    static let sheet = color(0xEEF3F9, 0x152130)
+    static let ink = color(0x14212F, 0xEAF1F8)
+    static let soft = color(0x4C5F73, 0xB3C2D2)
+    static let faint = color(0x9FB0C2, 0x52657A)
+    static let rule = color(0xDCE5EF, 0x233345)
+    static let accent = color(0x396899, 0xB7D6F4)
+    static let onAccent = color(0xF8FAFC, 0x0E1620)
+    static let red = color(0xB3363F, 0xFF9AA2)
+    static let green = color(0x2F7356, 0x8FC9AB)
     static let wash = sheet
-    static let mark = color(0xFADFD6, 0x3B2430)
-    static let selection = color(0xDCE1EC, 0x2B3550)
+    static let mark = color(0xE2EEFA, 0x1C2E44)
+    static let selection = color(0xCFE3F7, 0x27425F)
 
     static let size: CGFloat = 20
     static let column: CGFloat = 620

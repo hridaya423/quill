@@ -8,6 +8,7 @@ public struct Hunk: Equatable, Sendable, Identifiable {
     public var new: String
     public var flags: [String]
     public var touched: Bool
+    public var by: String?
 }
 
 public struct Review: Equatable, Sendable {
@@ -30,7 +31,7 @@ public struct Review: Equatable, Sendable {
         hunks.filter { $0.turn == turn }
     }
 
-    public mutating func agent(_ r: NSRange, before: NSString, after: NSString, turn: Int, flags: [String] = []) {
+    public mutating func agent(_ r: NSRange, before: NSString, after: NSString, turn: Int, flags: [String] = [], by: String? = nil) {
         let delta = after.length - before.length
         let lo0 = r.location, hi0 = NSMaxRange(r)
         var touching: [Hunk] = [], rest: [Hunk] = []
@@ -57,7 +58,7 @@ public struct Review: Equatable, Sendable {
         if old != new {
             serial += 1
             let marks = Array(Set(touching.flatMap(\.flags) + flags)).sorted()
-            hunks.append(Hunk(id: serial, turn: turn, range: range, old: old, new: new, flags: marks, touched: false))
+            hunks.append(Hunk(id: serial, turn: turn, range: range, old: old, new: new, flags: marks, touched: false, by: by ?? touching.first?.by))
         }
         hunks.sort { $0.range.location < $1.range.location }
     }

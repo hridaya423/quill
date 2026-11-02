@@ -182,3 +182,120 @@ public struct ItemScanner: Sendable {
         return String(decoding: bytes[...found], as: UTF8.self) + "]}"
     }
 }
+
+func fillable(_ line: String) -> Bool {
+    line.wholeMatch(of: /\s*(([-*+]|\d+[.)])\s*)?(\[ \]\s*)?([^:\n]{1,32}:\s*)?(\.\.\.|…|_+|TBD|TODO|\?+)?\s*/) != nil
+}
+
+public func stack(base: String, versions: [String]) -> String {
+    struct Hunk { var lo: Int; var hi: Int; var lines: [String]; var who: Int }
+    let old = base.components(separatedBy: "\n")
+    var hunks: [Hunk] = []
+    for (who, version) in versions.enumerated() {
+        let new = version.components(separatedBy: "\n")
+        var removed = Set<Int>(), inserted = Set<Int>()
+        for change in new.difference(from: old) {
+            switch change {
+            case .remove(let o, _, _): removed.insert(o)
+            case .insert(let o, _, _): inserted.insert(o)
+            }
+        }
+        var i = 0, j = 0
+        while i < old.count || j < new.count {
+            if i < old.count, j < new.count, !removed.contains(i), !inserted.contains(j) {
+                i += 1; j += 1
+                continue
+            }
+            var h = Hunk(lo: i, hi: i, lines: [], who: who)
+            while i < old.count, removed.contains(i) { i += 1 }
+            while j < new.count, inserted.contains(j) { h.lines.append(new[j]); j += 1 }
+            h.hi = i
+            hunks.append(h)
+        }
+    }
+    hunks.sort { ($0.lo, $0.hi, $0.who) < ($1.lo, $1.hi, $1.who) }
+    var out: [String] = []
+    var at = 0, k = 0
+    while k < hunks.count {
+        var group = [hunks[k]]
+        var lo = hunks[k].lo, hi = hunks[k].hi
+        k += 1
+        while k < hunks.count, hunks[k].lo < hi || hunks[k].lo == lo {
+            hi = max(hi, hunks[k].hi)
+            lo = min(lo, hunks[k].lo)
+            group.append(hunks[k])
+            k += 1
+        }
+        out += old[at..<lo]
+        at = hi
+        let authors = Array(Set(group.map(\.who))).sorted()
+        func region(_ who: Int) -> [String] {
+            var lines: [String] = [], p = lo
+            for h in group where h.who == who {
+                lines += old[p..<h.lo]
+                lines += h.lines
+                p = h.hi
+            }
+            return lines + old[p..<hi]
+        }
+        if authors.count == 1 {
+            out += region(authors[0])
+        } else if old[lo..<hi].allSatisfy(fillable) {
+            out += interleave(Array(old[lo..<hi]), authors.map(region))
+        } else {
+            out += region(authors[0])
+        }
+    }
+    out += old[at...]
+    return out.joined(separator: "\n")
+}
+
+func indent(_ s: String) -> Int { s.prefix { $0 == " " || $0 == "\t" }.count }
+
+func bulleted(_ s: String) -> Bool {
+    s.trimmingCharacters(in: .whitespaces).first.map { "-*+".contains($0) || $0.isNumber } ?? false
+}
+
+func interleave(_ base: [String], _ regions: [[String]]) -> [String] {
+    let top = base.filter(bulleted).map(indent).min()
+    let isStart = { (line: String) in top != nil && bulleted(line) && indent(line) == top }
+    let starts = base.indices.filter { isStart(base[$0]) }
+    let slots = Array(base[0..<(starts.first ?? base.count)])
+    let blocks = starts.indices.map { k in Array(base[starts[k]..<(k + 1 < starts.count ? starts[k + 1] : base.count)]) }
+    var out: [String] = []
+    var heads = Array(repeating: [String](), count: slots.count)
+    var stray: [String] = []
+    var theirs: [[[String]]] = []
+    for region in regions {
+        var j = 0, mine: [[String]] = []
+        for line in region {
+            if isStart(line) {
+                mine.append([line])
+            } else if !mine.isEmpty {
+                mine[mine.count - 1].append(line)
+            } else if let k = (j..<slots.count).first(where: { line.hasPrefix(slots[$0].replacing(/\s+$/, with: "")) }) {
+                j = k
+                if line != slots[k], !heads[k].contains(line) { heads[k].append(line) }
+            } else if slots.isEmpty {
+                if !stray.contains(line) { stray.append(line) }
+            } else if line != slots[j], !heads[j].contains(line) {
+                heads[j].append(line)
+            }
+        }
+        theirs.append(mine)
+    }
+    for (k, slot) in slots.enumerated() { out += heads[k].isEmpty ? [slot] : heads[k] }
+    out += stray
+    var placed: [[String]] = []
+    for k in 0..<(theirs.map(\.count).max() ?? 0) {
+        var any = false
+        for mine in theirs where k < mine.count && (k >= blocks.count || mine[k] != blocks[k]) {
+            any = true
+            guard !placed.contains(mine[k]) else { continue }
+            placed.append(mine[k])
+            out += mine[k]
+        }
+        if !any, k < blocks.count { out += blocks[k] }
+    }
+    return out
+}

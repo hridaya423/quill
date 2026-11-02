@@ -13,14 +13,28 @@ public struct Request: Sendable {
     public var text: String
     public var selection: String?
     public var mode: Mode
+    public var sources: [Source]
+    public var peers: [String]
 
-    public init(words: String, title: String, path: String, text: String, selection: String?, mode: Mode) {
+    public struct Source: Sendable {
+        public var url: String
+        public var text: String
+
+        public init(url: String, text: String) {
+            self.url = url
+            self.text = text
+        }
+    }
+
+    public init(words: String, title: String, path: String, text: String, selection: String?, mode: Mode, sources: [Source] = [], peers: [String] = []) {
         self.words = words
         self.title = title
         self.path = path
         self.text = text
         self.selection = selection
         self.mode = mode
+        self.sources = sources
+        self.peers = peers
     }
 }
 
@@ -44,6 +58,15 @@ public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, brief
         lines += ["They have this passage selected, so \"this\" means it:", "<selection>", s, "</selection>", ""]
     }
     lines += ["The note right now:", "<document>", r.text, "</document>", ""]
+    let read = r.sources.filter { !$0.text.isEmpty }, unread = r.sources.filter { $0.text.isEmpty }
+    if !read.isEmpty {
+        lines += ["Quill fetched the pages linked in the note and the request. Treat them as the brief: use their facts, names, dates, and rules, and never invent details they don't contain."]
+        for s in read { lines += ["<source url=\"\(s.url)\">", s.text, "</source>"] }
+        lines += [""]
+    }
+    if !unread.isEmpty {
+        lines += ["Quill couldn't open \(unread.map(\.url).joined(separator: ", ")). It may be private. If the request depends on it, say so in your reply and ask the writer to paste the text or share the link publicly.", ""]
+    }
     lines += [
         "You can read the writer's other files when they point you at them. Their home folder is \(NSHomeDirectory()). A path they name, like \"Projects/site\" or \"@Projects/site\", is inside it unless it starts with /. Hidden folders and Library are off limits. Read with your file tools; don't run commands that change anything.",
         "When they name a folder or file, open it before you write a word: list the folder, then read the files that explain it, like the README and any plans or docs.",
@@ -53,11 +76,18 @@ public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, brief
     let how = canEditFiles
         ? "edit \(r.path) directly with your file editing tool. Edit only that file"
         : "call the edit tool"
+    if !r.peers.isEmpty {
+        lines += [
+            "Other co-writers (\(r.peers.joined(separator: ", "))) are answering this same request at the same time, and Quill stacks every answer in the note under the writer's own. Bring ideas the others are unlikely to: skip the obvious first answer. Fill and add; don't rewrite what the writer wrote.",
+            "",
+        ]
+    }
     switch r.mode {
     case .guided:
         lines += [
             "If they want the text changed, \(how). Make the smallest edits that do what they asked. Keep their voice. Leave every other word exactly as it is. The writer reviews each change and keeps or reverts it.",
             "If they ask for new writing, like a draft, write it into the note in their voice, built only from what they gave you and what you read.",
+            "If the note is an outline with empty slots, like blank bullets, \"...\", or labels such as \"Pros:\" with nothing after them, fill those slots in place. Keep the writer's own entries word for word, and match the outline's shape: the same bullets, labels, and nesting. If they ask for more, add new entries in that shape after theirs.",
             "If they asked a question or want your opinion, don't edit. Answer instead.",
             "Finish with a plain-text reply for them. After an edit: one short sentence, at most 12 words, naming what you changed; don't quote the new text or mention what you left alone. For an opinion: up to three sentences, specific and honest, the way a good editor talks. No Markdown, no lists, no preamble, no em dashes.",
         ]
