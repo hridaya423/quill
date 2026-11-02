@@ -102,6 +102,19 @@ struct Snapshots {
             await shot("done")
             ws.phase = .said("Tightened the opening to one confident sentence.")
             await shot("said")
+            ws.phase = .said(readable("""
+            <notes>[{"quote": "x", "note": "y"}]</notes>
+            The draft is clear, but three things hold it back.
+
+            - **Opening:** it hedges three times before it says anything. Lead with the claim.
+            - **Middle:** the second paragraph repeats the first. Cut it or merge the one new fact.
+            - **Ending:** the last line restates the title. End on what the reader can do next.
+
+            ## Smaller things
+            * "Basically" appears four times.
+            * Two sentences run past forty words.
+            """))
+            await shot("said-long")
             ws.phase = .failed("Claude Code stopped responding. Check that Node is installed, then try again.")
             await shot("failed")
             ws.phase = .idle

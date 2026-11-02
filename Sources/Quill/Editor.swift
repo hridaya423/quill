@@ -613,6 +613,9 @@ final class QuillTextView: NSTextView {
                 storage.addAttributes([.foregroundColor: Theme.faint, .kern: 6], range: full)
             }
         }
+        for marker in m.quiet where marker.length > 0 {
+            storage.addAttribute(.foregroundColor, value: Theme.faint, range: marker)
+        }
         for marker in m.markers where marker.length > 0 {
             if active {
                 storage.addAttribute(.foregroundColor, value: Theme.faint, range: marker)
@@ -759,8 +762,8 @@ final class QuillTextView: NSTextView {
         let text = string as NSString
         let sel = selectedRange()
         guard NSMaxRange(sel) <= text.length else { return }
-        let lines = text.lineRange(for: sel)
-        if lines != activeLines {
+        let lines = text.lineRange(for: NSRange(location: sel.location, length: 0))
+        if sel.length == 0, !stillSelecting, lines != activeLines {
             let old = activeLines
             activeLines = lines
             if NSMaxRange(old) <= text.length { restyle(old) }

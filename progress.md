@@ -1,5 +1,15 @@
 # Progress
 
+## Feedback round on the live app (2026-11-02, done)
+- [x] Replies: `readable()` (QuillCore) strips `<notes>` and other tags and Markdown list and heading markers before anything reaches the pill. The pill renders inline Markdown, clamps long replies to six lines with Show all, and stays while hovered. Test: `replyShownToTheWriterHasNoTagsOrMarkdownMarkers`. Snapshot: `said-long`.
+- [x] Margin notes: at most five, one sentence of at most 14 words, an instruction, no hedging or praise.
+- [x] Co-writers: every ACP agent T3 Code supports. Claude Code, Codex, Cursor, Gemini CLI, Grok Build, OpenCode, Antigravity, Devin, Pi, fx, Anthropic API. Agents not installed come from the ACP registry (`Registry.swift`): verified by SHA-256, unpacked once into Application Support, or run through npx. Muse Code is left out: it speaks MSP, not ACP. Handshakes checked: Devin, Gemini, Grok, Pi answer `initialize`; fx needs `fx login`. Registry install test: `QUILL_REGISTRY=1 scripts/test.sh --filter Registry`.
+- [x] Marks: T3 Code's provider icons, with dark variants; sources in `Brand/CREDITS.txt`.
+- [x] Settings: custom panes on paper. Folder card, Guided and Margin choice cards with live samples, a provider tile grid, voice sources card, keycap shortcut lists. Snapshots in scratchpad `snap2`, light and dark.
+- [x] Sidebar: a full-size New Note button beside search. Current-line marker reveal changes only for a caret, not during a drag selection. Inline emphasis markers stay faint so text never reflows on caret moves.
+- [x] Crash fixed: `Brand.url` fell back to `Bundle.module` inside the .app, which traps when a file is missing (the dark-mark probe). Inside an .app it now uses only the main bundle.
+- [x] Tests: 20 + 48 pass. Frames: 8.3 ms worst in every phase. Under external load (load average 9 to 15) HEAD and this tree spiked alike in an interleaved A/B, so spikes then were noise.
+
 ## Interaction and visual redesign (2026-11-01, in progress)
 Brief: redesign the interaction and visual layer to the standard of great Mac software, without adding features. Spec: `docs/design/review.md`.
 

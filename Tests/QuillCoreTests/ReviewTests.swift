@@ -132,3 +132,14 @@ private struct Doc {
     #expect(e.proposed == "Three 5.")
     #expect(e.final == "Three 5.")
 }
+
+@Test func replyShownToTheWriterHasNoTagsOrMarkdownMarkers() {
+    let raw = """
+    <notes>[{"quote": "x", "note": "y"}]</notes>
+    I made two changes:
+    - **Intro:** shorter.
+    ## Next
+    <note>stray</note> Done.
+    """
+    #expect(readable(raw) == "I made two changes:\n• **Intro:** shorter.\nNext\nDone.")
+}

@@ -894,6 +894,27 @@ func stamp(_ date: Date, now: Date = .now) -> String {
     return date.formatted(.dateTime.day().month(.abbreviated).year())
 }
 
+struct Compose: View {
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(hovering ? Color.ink : Color.soft)
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.ink.opacity(hovering ? 0.08 : 0.05)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(Press())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .help("New Note (⌘N)")
+        .accessibilityLabel("New Note")
+    }
+}
+
 struct Sidebar: View {
     @Bindable var ws: Workspace
     @Bindable var chrome: Chrome
@@ -938,8 +959,9 @@ struct Sidebar: View {
                 }
             }
             .padding(.horizontal, 9)
-            .padding(.vertical, 6)
+            .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.ink.opacity(0.05)))
+            .safeAreaInset(edge: .trailing, spacing: 6) { Compose { ws.create() } }
             .padding(.horizontal, 10)
             .padding(.top, 6)
             .padding(.bottom, 4)
@@ -963,12 +985,7 @@ struct Sidebar: View {
                         }
                     }
                 } header: {
-                    HStack {
-                        Text(ws.title)
-                        Spacer()
-                        Button { ws.create() } label: { Image(systemName: "square.and.pencil") }
-                            .buttonStyle(.plain).help("New note (⌘N)")
-                    }
+                    Text(ws.title)
                 }
             }
             .listStyle(.sidebar)

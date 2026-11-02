@@ -21,6 +21,7 @@ public struct Span: Equatable, Sendable {
 public struct Markup: Equatable, Sendable {
     public var spans: [Span] = []
     public var markers: [NSRange] = []
+    public var quiet: [NSRange] = []
 }
 
 private func rx(_ p: String) -> NSRegularExpression {
@@ -93,7 +94,7 @@ public func markup(_ text: NSString, line: NSRange, inFence: Bool) -> Markup {
                 continue
             }
             m.spans.append(Span(range: content, style: style))
-            m.markers += [open, close]
+            m.quiet += [open, close]
         }
     }
     return m

@@ -118,13 +118,19 @@ final class Workspace {
     }
 
     func available(_ spec: AgentSpec) -> Bool? {
-        guard let binary = spec.requires else { return hasKey }
-        return installed[binary]
+        switch spec.kind {
+        case .anthropic: return hasKey
+        case .registry(_, _, false): return true
+        default:
+            let found = spec.binaries.map { installed[$0] }
+            if found.contains(true) { return true }
+            return found.contains(nil) ? nil : false
+        }
     }
 
     func checkAgents() {
         Task {
-            for binary in Set(AgentSpec.all.compactMap(\.requires)) {
+            for binary in Set(AgentSpec.all.flatMap(\.binaries)) {
                 installed[binary] = await Shell.find(binary) != nil
             }
         }
@@ -426,7 +432,7 @@ final class Workspace {
             let spec = spec
             Task { [weak self] in
                 guard let self else { return }
-                if let binary = spec.requires { installed[binary] = await Shell.find(binary) != nil }
+                for binary in spec.binaries { installed[binary] = await Shell.find(binary) != nil }
                 if available(spec) == false {
                     fail("\(spec.name) needs \(spec.need). Install it, or choose another co-writer.", remedy: ("Choose…", { [weak self] in self?.showSettings(.cowriters) }))
                 } else {
@@ -473,6 +479,10 @@ final class Workspace {
         Task {
             var failure: String?
             do {
+                Registry.status = { [weak self] note in
+                    guard let self, case .thinking(_, let w) = phase else { return }
+                    phase = .thinking(note, words: w)
+                }
                 try await agent.prepare(cwd: Self.desk, readable: voiceSources)
                 sync()
                 guard turn == id else { return }
@@ -486,7 +496,7 @@ final class Workspace {
                             if case .thinking(_, let w) = self.phase { self.phase = .thinking(a, words: w) }
                         case .text(let t):
                             self.reply += t
-                            self.live = self.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                            self.live = readable(self.reply)
                         case .focus(let passage):
                             self.focus(passage)
                         case .proposed(let next):
@@ -535,10 +545,11 @@ final class Workspace {
             phase = .failed(failure)
             return
         }
-        let said = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        let said = readable(raw)
         let pending = editor?.review.turn(id).count ?? 0
-        if mode == .notes, let editor,
-           let found = QuillCore.notes(from: tagged.map { "<notes>\($0)</notes>" } ?? said, in: editor.string), !found.isEmpty {
+        if mode == .notes || raw.contains("<notes>") || tagged != nil, let editor,
+           let found = QuillCore.notes(from: tagged.map { "<notes>\($0)</notes>" } ?? raw, in: editor.string), !found.isEmpty {
             margin = found
             let summary = found.count == 1 ? "One note in the margin." : "\(found.count) notes in the margin."
             transcript[url, default: []].append(Line(words: words, reply: summary))

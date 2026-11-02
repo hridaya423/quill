@@ -60,9 +60,9 @@ public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, brief
                 ? "Otherwise reply with only a JSON array of margin notes inside <notes></notes> tags and nothing else, like:"
                 : "Otherwise call leave_notes once with your margin notes and write nothing else. Each note looks like:",
             canEditFiles
-                ? #"<notes>[{"quote": "exact words from the document", "lens": "Cut", "note": "what you think and why, in one or two sentences"}]</notes>"#
-                : #"{"quote": "exact words from the document", "lens": "Cut", "note": "what you think and why, in one or two sentences"}"#,
-            "Each quote must be copied exactly from the document, 3 to 12 words long. The lens is one of: \(lenses.joined(separator: ", ")). Give at most 6 notes, most important first. Write notes like a great editor in the margin: specific, brief, no praise padding, no em dashes.",
+                ? #"<notes>[{"quote": "exact words from the document", "lens": "Cut", "note": "one direct sentence, at most 14 words"}]</notes>"#
+                : #"{"quote": "exact words from the document", "lens": "Cut", "note": "one direct sentence, at most 14 words"}"#,
+            "Each quote must be copied exactly from the document, 3 to 12 words long. The lens is one of: \(lenses.joined(separator: ", ")). Give at most 5 notes, most important first. Each note is one plain sentence of at most 14 words that tells the writer what to do, like \"Cut the second 'listens'; it lands better once.\" No hedging, no praise, no restating the quote, no em dashes.",
         ]
     }
     return lines.joined(separator: "\n")
@@ -74,6 +74,16 @@ public struct MarginNote: Equatable, Sendable, Identifiable {
     public var quote: String
     public var note: String
     public var lens: String?
+}
+
+public func readable(_ reply: String) -> String {
+    var s = reply.replacingOccurrences(of: #"<(notes?|selection|document|voice)\b[^>]*>[\s\S]*?</\1>"#, with: "", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"</?[A-Za-z][\w-]*(\s[^>]*)?/?>"#, with: "", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"(?m)^\s*[-*]\s+"#, with: "• ", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"(?m)^#{1,6}\s+"#, with: "", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"(?m)^[ \t]+|[ \t]+$"#, with: "", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+    return s.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 public func notes(from reply: String, in text: String) -> [MarginNote]? {

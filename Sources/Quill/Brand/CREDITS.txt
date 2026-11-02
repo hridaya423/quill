@@ -1,6 +1,6 @@
 bude.jpg: detail of Jean Clouet, Guillaume Budé (about 1536). The Metropolitan Museum of Art, object 435914, Open Access (CC0).
 EBGaramond*.ttf: EB Garamond by Georg Duffner and Octavio Pardo, SIL Open Font License 1.1 (EBGaramond-OFL.txt).
-mark-claude.svg: Claude spark from the Anthropic press kit (anthropic.com/press-kit). Trademark of Anthropic.
-mark-codex.svg: Codex mark as drawn in lobehub/lobe-icons (MIT). Trademark of OpenAI; replace with the file from openai.com/brand before release.
-mark-gemini.svg: Gemini sparkle as served by gstatic.com. Trademark of Google.
-mark-opencode*.svg: OpenCode logo from github.com/anomalyco/opencode (MIT).
+mark-claude.svg, mark-codex.svg, mark-antigravity.png: provider icons as shipped in T3 Code's client bundle. Trademarks of Anthropic, OpenAI, and Google.
+mark-cursor*.svg, mark-fx*.svg, mark-grok*.svg, mark-opencode*.svg, mark-pi*.svg: provider icons (light and dark fills) as shipped in T3 Code's client bundle. Trademarks of their owners.
+mark-gemini.svg, mark-devin.svg: agent icons from the ACP registry (cdn.agentclientprotocol.com/registry/v1/latest). Trademarks of Google and Cognition.
+Check each owner's brand terms before release.

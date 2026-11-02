@@ -33,7 +33,12 @@ protocol Agent: AnyObject {
 }
 
 struct AgentSpec: Identifiable, Hashable {
-    enum Kind: Hashable { case acp([String]), codex([String]), anthropic }
+    enum Kind: Hashable {
+        case acp([String])
+        case registry(String, local: [String]?, npx: Bool)
+        case codex([String])
+        case anthropic
+    }
     var id: String
     var name: String
     var detail: String
@@ -44,49 +49,64 @@ struct AgentSpec: Identifiable, Hashable {
     var picks: [String] = []
 
     static let all: [AgentSpec] = [
-        AgentSpec(id: "claude", name: "Claude Code", detail: "Your Claude subscription, through Claude Code",
-                  kind: .acp(["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.99.1"]), defaultModel: "opus",
-                  mark: "claude", install: "Install Node from nodejs.org", picks: ["opus", "sonnet", "haiku"]),
-        AgentSpec(id: "codex", name: "Codex", detail: "Your ChatGPT subscription, through the Codex CLI",
-                  kind: .codex(["codex", "app-server"]), mark: "codex", install: "npm install -g @openai/codex"),
-        AgentSpec(id: "anthropic", name: "Anthropic API", detail: "Claude with your API key",
-                  kind: .anthropic, defaultModel: "claude-opus-5-5", mark: "claude",
-                  picks: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]),
-        AgentSpec(id: "gemini", name: "Gemini CLI", detail: "Google's agent over ACP",
-                  kind: .acp(["gemini", "--experimental-acp"]), mark: "gemini", install: "npm install -g @google/gemini-cli"),
-        AgentSpec(id: "opencode", name: "OpenCode", detail: "Any model OpenCode is signed in to",
-                  kind: .acp(["opencode", "acp"]), mark: "opencode", install: "npm install -g opencode-ai"),
+        AgentSpec(id: "claude", name: "Claude Code", detail: "Claude plan", kind: .acp(["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.99.1"]),
+                  defaultModel: "opus", mark: "claude", install: "Needs Node: nodejs.org", picks: ["opus", "sonnet", "haiku"]),
+        AgentSpec(id: "codex", name: "Codex", detail: "ChatGPT plan", kind: .codex(["codex", "app-server"]),
+                  mark: "codex", install: "npm install -g @openai/codex"),
+        AgentSpec(id: "cursor", name: "Cursor", detail: "Cursor plan", kind: .registry("cursor", local: nil, npx: false),
+                  mark: "cursor", install: "Downloads on first use. Sign in with cursor-agent login."),
+        AgentSpec(id: "gemini", name: "Gemini CLI", detail: "Google account", kind: .registry("gemini", local: ["gemini", "--acp"], npx: true),
+                  mark: "gemini", install: "Needs Node: nodejs.org"),
+        AgentSpec(id: "grok", name: "Grok Build", detail: "xAI account", kind: .registry("grok-build", local: ["grok", "agent", "stdio"], npx: true),
+                  mark: "grok", install: "Needs Node: nodejs.org"),
+        AgentSpec(id: "opencode", name: "OpenCode", detail: "Any provider", kind: .registry("opencode", local: ["opencode", "acp"], npx: false),
+                  mark: "opencode", install: "Downloads on first use."),
+        AgentSpec(id: "antigravity", name: "Antigravity", detail: "Google account", kind: .registry("antigravity-acp", local: nil, npx: false),
+                  mark: "antigravity", install: "Downloads on first use."),
+        AgentSpec(id: "devin", name: "Devin", detail: "Devin account", kind: .registry("devin", local: ["devin", "acp"], npx: false),
+                  mark: "devin", install: "Downloads on first use. Sign in with devin auth login."),
+        AgentSpec(id: "pi", name: "Pi", detail: "Any provider", kind: .registry("pi-acp", local: ["pi-acp"], npx: true),
+                  mark: "pi", install: "npm install -g @mariozechner/pi-coding-agent"),
+        AgentSpec(id: "fx", name: "fx", detail: "fx account", kind: .acp(["fx", "acp"]),
+                  mark: "fx", install: "Install fx, then sign in with fx login."),
+        AgentSpec(id: "anthropic", name: "Anthropic API", detail: "API key", kind: .anthropic,
+                  defaultModel: "claude-opus-5-5", mark: "claude", picks: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]),
     ]
 
     static func named(_ id: String) -> AgentSpec { all.first { $0.id == id } ?? all[0] }
 
-    var requires: String? {
+    var binaries: [String] {
         switch kind {
-        case .acp(let argv), .codex(let argv): argv.first
-        case .anthropic: nil
+        case .acp(let argv), .codex(let argv): [argv[0]]
+        case .registry(_, let local, let npx): npx ? (local.map { [$0[0]] } ?? []) + ["npx"] : []
+        case .anthropic: []
         }
     }
 
     var missing: String {
-        switch requires {
-        case nil: "Needs a key"
-        case "npx": "Needs Node"
+        switch kind {
+        case .anthropic: "Needs a key"
+        case .registry(_, _, true): "Needs Node"
+        case .acp(let argv) where argv[0] == "npx": "Needs Node"
         default: "Not installed"
         }
     }
 
     var need: String {
-        switch requires {
-        case nil: "an API key"
-        case "npx": "Node"
-        case let binary?: "the \(binary) command"
+        switch kind {
+        case .anthropic: "an API key"
+        case .registry(_, _, true): "Node"
+        case .acp(let argv) where argv[0] == "npx": "Node"
+        case .acp(let argv), .codex(let argv): "the \(argv[0]) command"
+        case .registry: "a download"
         }
     }
 
     @MainActor func make() -> Agent {
         let preferred = Prefs.model(id) ?? defaultModel
         return switch kind {
-        case .acp(let argv): ACPAgent(argv: argv, preferred: preferred)
+        case .acp(let argv): ACPAgent(launch: { argv }, preferred: preferred)
+        case .registry(let agent, let local, _): ACPAgent(launch: { try await Registry.argv(agent, local: local) }, preferred: preferred)
         case .codex(let argv): CodexAgent(argv: argv, preferred: preferred)
         case .anthropic: AnthropicAgent(model: preferred ?? "claude-opus-5-5")
         }
@@ -299,7 +319,7 @@ func choices(from configOptions: Any?, id: String) -> (current: String?, options
 
 @MainActor
 final class ACPAgent: Agent {
-    let argv: [String]
+    let launch: () async throws -> [String]
     let canEditFiles = true
     var conversation: String? { session }
     private(set) var model: ModelChoice?
@@ -313,8 +333,8 @@ final class ACPAgent: Agent {
     private var starting: Task<Void, Error>?
     private var events: (@MainActor (AgentEvent) -> Void)?
 
-    init(argv: [String], preferred: String?) {
-        self.argv = argv
+    init(launch: @escaping () async throws -> [String], preferred: String?) {
+        self.launch = launch
         self.preferred = preferred
     }
 
@@ -330,7 +350,7 @@ final class ACPAgent: Agent {
 
     private func boot(cwd: URL) async throws {
         rpc?.stop()
-        let rpc = try RPC(await Shell.process(argv, cwd: cwd))
+        let rpc = try RPC(await Shell.process(try await launch(), cwd: cwd))
         self.rpc = rpc
         self.cwd = cwd
         rpc.onRequest = { [weak self] method, params in self?.answer(method, params) ?? [:] }

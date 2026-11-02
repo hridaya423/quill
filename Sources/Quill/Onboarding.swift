@@ -113,7 +113,8 @@ enum Brand {
     static let family = "EB Garamond"
 
     static func url(_ name: String) -> URL? {
-        Bundle.main.url(forResource: name, withExtension: nil) ?? Bundle.module.url(forResource: "Brand/\(name)", withExtension: nil)
+        if Bundle.main.bundleURL.pathExtension == "app" { return Bundle.main.url(forResource: name, withExtension: nil) }
+        return Bundle.module.url(forResource: "Brand/\(name)", withExtension: nil)
     }
 
     static func register() {
@@ -634,7 +635,7 @@ struct Onboarding: View {
             title("Choose your co-writer.", "Quill uses the sign-in of the tool you choose, so your current subscription works.")
             VStack(spacing: 0) {
                 rule()
-                ForEach(AgentSpec.all.filter { $0.requires != nil || ws.hasKey }) { spec in
+                ForEach(AgentSpec.all.filter { $0.kind != .anthropic || ws.hasKey }) { spec in
                     let ready = ws.available(spec)
                     let on = ws.agentID == spec.id
                     row(on: on, enabled: ready != false, mark: {

@@ -234,23 +234,19 @@ struct Pill: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
                 Circle().fill(Color.accentInk).frame(width: 7, height: 7).padding(.top, 8)
-                Text(text)
-                    .font(.serif(17))
-                    .foregroundStyle(Color.ink)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: 480, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                Reply(text: text)
                 Button { ws.phase = .idle } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
                     .buttonStyle(.plain).foregroundStyle(Color.soft).padding(.top, 5)
                     .opacity(hovering ? 1 : 0.4)
+                    .help("Dismiss")
             }
             if pending > 0 { reviewRow.padding(.leading, 19) }
         }
         .padding(.vertical, 1)
         .task(id: shown) {
+            guard !hovering else { return }
             let words = Double(text.split(separator: " ").count)
-            await dismiss(after: max(5, words * 0.32 + 2.5))
+            await dismiss(after: max(5, min(words, 60) * 0.32 + 2.5))
         }
     }
 
@@ -265,7 +261,7 @@ struct Pill: View {
                     ForEach(lines) { line in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(line.words).font(.system(size: 12)).foregroundStyle(Color.soft).lineLimit(1)
-                            Text(line.reply).font(.serif(15)).foregroundStyle(line.failed ? Color.redInk : Color.ink)
+                            Text((try? AttributedString(markdown: line.reply, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(line.reply)).font(.serif(15)).foregroundStyle(line.failed ? Color.redInk : Color.ink)
                                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -360,6 +356,47 @@ struct Waveform: View {
             .frame(height: 20)
             .animation(.easeOut(duration: 0.08), value: level)
         }
+    }
+}
+
+struct Reply: View {
+    var text: String
+    @State private var open = false
+
+    private var styled: AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+
+    private var long: Bool { text.count > 360 || text.filter { $0 == "\n" }.count > 4 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Group {
+                if open {
+                    ScrollView { prose(nil) }.frame(maxHeight: 320)
+                } else {
+                    prose(long ? 6 : nil)
+                }
+            }
+            .frame(width: 480, alignment: .leading)
+            if long {
+                Button(open ? "Show less" : "Show all") { withAnimation(morph) { open.toggle() } }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.soft)
+            }
+        }
+    }
+
+    private func prose(_ limit: Int?) -> some View {
+        Text(styled)
+            .font(.serif(17))
+            .foregroundStyle(Color.ink)
+            .lineSpacing(3)
+            .lineLimit(limit)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
