@@ -64,6 +64,11 @@ enum Prefs {
         set { store.set(newValue, forKey: "endpoint") }
     }
 
+    static var expanded: [String] {
+        get { store.stringArray(forKey: "expanded") ?? [] }
+        set { store.set(newValue, forKey: "expanded") }
+    }
+
     static func model(_ agent: String) -> String? { store.string(forKey: "model." + agent) }
     static func setModel(_ value: String, for agent: String) { store.set(value, forKey: "model." + agent) }
 

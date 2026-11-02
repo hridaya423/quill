@@ -72,3 +72,9 @@ func texts(_ ranges: [NSRange], _ t: NSString) -> [String] { ranges.map { t.subs
     #expect(texts(m.markers, t) == ["**", "**", "==", "=="])
     #expect(m.spans.contains { $0.style == .highlight && t.substring(with: $0.range) == "c" })
 }
+
+@Test func wordsSkipMarkdownPunctuation() {
+    #expect(wordCount("# Pitch\n\n- [ ] call **Sam** today — don't wait") == 6)
+    #expect(wordCount("") == 0)
+    #expect(wordCount("  ---  ") == 0)
+}

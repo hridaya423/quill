@@ -9,6 +9,8 @@ final class Chrome {
     var draft = ""
     var hinting = !Prefs.spoke
     var selectedWords = 0
+    var words = 0
+    var marked = 0
     var coach: String?
     var history: [String] = Prefs.history
     var recall: Int?
@@ -94,6 +96,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("Quill")
         if window.frame.origin == .zero { window.center() }
         window.backgroundColor = Theme.paper
+        let toggle = NSButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!,
+                              target: nil, action: #selector(NSSplitViewController.toggleSidebar(_:)))
+        toggle.bezelStyle = .accessoryBarAction
+        toggle.isBordered = false
+        toggle.contentTintColor = Theme.soft
+        toggle.toolTip = "Toggle Sidebar (⌃⌘S)"
+        toggle.frame = NSRect(x: 4, y: 0, width: 30, height: 28)
+        let holder = NSView(frame: NSRect(x: 0, y: 0, width: 38, height: 28))
+        holder.addSubview(toggle)
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = holder
+        accessory.layoutAttribute = .left
+        window.addTitlebarAccessoryViewController(accessory)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(editor.text)
 
@@ -507,6 +522,7 @@ final class EditorController: NSViewController {
     private var toggled = false
     private var chord = false
     private var lastKey: CFAbsoluteTime = 0
+    private var counted = -1
 
     init(ws: Workspace) {
         self.ws = ws
@@ -526,6 +542,15 @@ final class EditorController: NSViewController {
         empty.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(empty)
 
+        let fade = Fade()
+        fade.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(fade)
+
+        let status = NSHostingView(rootView: Status(ws: ws, chrome: chrome))
+        status.translatesAutoresizingMaskIntoConstraints = false
+        status.sizingOptions = [.intrinsicContentSize]
+        root.addSubview(status)
+
         let pill = NSHostingView(rootView: Pill(ws: ws, chrome: chrome))
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.sizingOptions = [.intrinsicContentSize]
@@ -538,6 +563,12 @@ final class EditorController: NSViewController {
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             empty.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -40),
+            fade.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            fade.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
+            fade.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            fade.heightAnchor.constraint(equalToConstant: 48),
+            status.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            status.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -14),
             pill.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             pill.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             pill.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, constant: -32),
@@ -555,8 +586,12 @@ final class EditorController: NSViewController {
         text.onEdit = { [weak self] in
             self?.ws.edited()
             self?.layoutNotes()
+            self?.count()
         }
-        text.onCaret = { [weak self] in self?.layoutCard() }
+        text.onCaret = { [weak self] in
+            self?.layoutCard()
+            self?.count(selection: true)
+        }
         text.onHover = { [weak self] index in
             guard let self else { return }
             let id = index.flatMap { self.ws.review.hunk(at: $0)?.id }
@@ -586,6 +621,17 @@ final class EditorController: NSViewController {
         }
         observe()
         listen()
+    }
+
+    func count(selection: Bool = false) {
+        let sel = text.selectedRange()
+        let marked = sel.length == 0 ? 0 : wordCount((text.string as NSString).substring(with: sel))
+        if chrome.marked != marked { chrome.marked = marked }
+        let length = (text.string as NSString).length
+        guard !selection || length != counted else { return }
+        counted = length
+        let words = wordCount(text.string)
+        if chrome.words != words { chrome.words = words }
     }
 
     @objc func zoomIn(_ sender: Any?) { zoom(scroll.magnification * 1.1) }
@@ -884,12 +930,12 @@ final class EditorController: NSViewController {
     }
 }
 
-func stamp(_ date: Date, now: Date = .now) -> String {
+func stamp(_ date: Date, now: Date = .now, short: Bool = false) -> String {
     let cal = Calendar.current
     if cal.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
     if cal.isDateInYesterday(date) { return "Yesterday" }
     if let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: now)).day, days < 7 {
-        return date.formatted(.dateTime.weekday(.wide))
+        return date.formatted(.dateTime.weekday(short ? .abbreviated : .wide))
     }
     if cal.component(.year, from: date) == cal.component(.year, from: now) { return date.formatted(.dateTime.day().month(.abbreviated)) }
     return date.formatted(.dateTime.day().month(.abbreviated).year())
@@ -923,6 +969,18 @@ struct Sidebar: View {
     @State private var renaming: Note?
     @State private var name = ""
     @State private var query = ""
+    @State private var open = Set(Prefs.expanded)
+
+    private func rename(_ note: Note) {
+        name = note.title
+        renaming = note
+    }
+
+    private func place(_ note: Note) -> String {
+        let folder = note.url.deletingLastPathComponent().path.replacingOccurrences(of: ws.vault.path, with: "")
+        let place = folder.isEmpty ? ws.title : String(folder.dropFirst())
+        return "\(place) · \(stamp(note.modified, short: true))"
+    }
     @FocusState private var searchFocused: Bool
 
     private var shown: [Note] {
@@ -967,26 +1025,21 @@ struct Sidebar: View {
             .padding(.top, 6)
             .padding(.bottom, 4)
             List(selection: Binding(get: { ws.current }, set: { if let url = $0 { ws.open(url) } })) {
-                Section {
+                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Section {
+                        Branch(folder: Shelf(ws.notes, in: ws.vault), ws: ws, open: $open, rename: rename)
+                    } header: {
+                        Text(ws.title)
+                    }
+                } else {
                     ForEach(shown) { note in
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(note.title).font(.serif(15.5, .medium)).lineLimit(1)
-                            TimelineView(.everyMinute) { _ in
-                                Text(stamp(note.modified))
-                            }
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(note.title).font(.serif(15, .medium)).lineLimit(1)
+                            Text(place(note)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                         }
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 1)
                         .tag(note.url)
-                        .contextMenu {
-                            Button("Rename…") { name = note.title; renaming = note }
-                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([note.url]) }
-                            Divider()
-                            Button("Move to Trash", role: .destructive) { ws.trash(note) }
-                        }
                     }
-                } header: {
-                    Text(ws.title)
                 }
             }
             .listStyle(.sidebar)
@@ -998,6 +1051,15 @@ struct Sidebar: View {
             AgentBadge(ws: ws, settings: settings)
         }
         .onChange(of: chrome.searching) { _, on in searchFocused = on }
+        .onChange(of: open) { Prefs.expanded = Array(open) }
+        .onChange(of: ws.current, initial: true) { _, url in
+            guard let url else { return }
+            var folder = url.deletingLastPathComponent()
+            while folder.path.count > ws.vault.path.count, folder.path.hasPrefix(ws.vault.path) {
+                open.insert(folder.path)
+                folder = folder.deletingLastPathComponent()
+            }
+        }
         .onChange(of: searchFocused) { _, on in if !on { chrome.searching = false } }
         .alert("Rename note", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $name)
@@ -1006,6 +1068,114 @@ struct Sidebar: View {
                 renaming = nil
             }
             Button("Cancel", role: .cancel) { renaming = nil }
+        }
+    }
+}
+
+final class Fade: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSGradient(colors: [Theme.paper, Theme.paper.withAlphaComponent(0.85), Theme.paper.withAlphaComponent(0)], atLocations: [0, 0.3, 1], colorSpace: .sRGB)?
+            .draw(in: bounds, angle: 90)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        needsDisplay = true
+    }
+}
+
+struct Status: View {
+    var ws: Workspace
+    var chrome: Chrome
+
+    var body: some View {
+        let shown = ws.current != nil && ws.phase == .idle && !chrome.commanding && chrome.words > 0
+        HStack(spacing: 14) {
+            if chrome.marked > 0 {
+                Text("\(chrome.marked.formatted()) of \(chrome.words.formatted()) words")
+            } else {
+                Text(chrome.words == 1 ? "1 word" : "\(chrome.words.formatted()) words")
+                Text("\(max(1, Int((Double(chrome.words) / 230).rounded(.up)))) min read")
+            }
+        }
+        .font(.system(size: 11.5).monospacedDigit())
+        .foregroundStyle(Color.soft.opacity(0.85))
+        .opacity(shown ? 1 : 0)
+        .animation(.easeOut(duration: 0.2), value: shown)
+        .allowsHitTesting(false)
+    }
+}
+
+struct Shelf: Identifiable {
+    var url: URL
+    var folders: [Shelf]
+    var notes: [Note]
+    var id: URL { url }
+    var name: String { url.lastPathComponent }
+
+    init(_ all: [Note], in root: URL) {
+        url = root
+        let base = root.standardizedFileURL.path
+        var direct: [Note] = []
+        var nested: [String: [Note]] = [:]
+        for note in all {
+            let rest = note.url.standardizedFileURL.path.dropFirst(base.count + 1)
+            if let slash = rest.firstIndex(of: "/") {
+                nested[String(rest[..<slash]), default: []].append(note)
+            } else {
+                direct.append(note)
+            }
+        }
+        notes = direct.sorted { $0.modified > $1.modified }
+        folders = nested.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            .map { Shelf(nested[$0]!, in: root.appending(path: $0)) }
+    }
+}
+
+struct Branch: View {
+    var folder: Shelf
+    @Bindable var ws: Workspace
+    @Binding var open: Set<String>
+    var rename: (Note) -> Void
+
+    var body: some View {
+        ForEach(folder.folders) { sub in
+            DisclosureGroup(isExpanded: Binding(get: { open.contains(sub.url.path) }, set: { if $0 { open.insert(sub.url.path) } else { open.remove(sub.url.path) } })) {
+                Branch(folder: sub, ws: ws, open: $open, rename: rename)
+            } label: {
+                Label {
+                    Text(sub.name).font(.serif(15)).lineLimit(1)
+                } icon: {
+                    Image(systemName: "folder").font(.system(size: 12, weight: .light)).foregroundStyle(Color.soft)
+                }
+                .contextMenu {
+                    Button("New Note Here") { ws.create(in: sub.url) }
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([sub.url]) }
+                }
+            }
+        }
+        ForEach(folder.notes) { note in
+            HStack(spacing: 8) {
+                Label {
+                    Text(note.title).font(.serif(15)).lineLimit(1)
+                } icon: {
+                    Image(systemName: "doc.text").font(.system(size: 12, weight: .light)).foregroundStyle(Color.soft)
+                }
+                Spacer(minLength: 4)
+                TimelineView(.everyMinute) { _ in
+                    Text(stamp(note.modified, short: true))
+                }
+                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 1)
+            .tag(note.url)
+            .contextMenu {
+                Button("Rename…") { rename(note) }
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([note.url]) }
+                Divider()
+                Button("Move to Trash", role: .destructive) { ws.trash(note) }
+            }
         }
     }
 }

@@ -158,3 +158,22 @@ public func fenceState(before location: Int, in text: NSString) -> Bool {
         search = NSRange(location: next, length: max(0, location - next))
     }
 }
+
+public func wordCount(_ text: String) -> Int {
+    var count = 0
+    var inToken = false
+    var counted = false
+    for scalar in text.unicodeScalars {
+        if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+            inToken = false
+            counted = false
+            continue
+        }
+        inToken = true
+        if !counted, CharacterSet.alphanumerics.contains(scalar) {
+            count += 1
+            counted = true
+        }
+    }
+    return count
+}

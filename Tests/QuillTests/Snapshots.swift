@@ -35,6 +35,11 @@ struct Snapshots {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "../../scripts/fixtures/pitch.md")
         try FileManager.default.copyItem(at: fixture, to: v.appending(path: "pitch.md"))
         try "# Groceries\n\n- eggs\n- **oat** milk\n".write(to: v.appending(path: "Groceries.md"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: v.appending(path: "Projects/Drafts"), withIntermediateDirectories: true)
+        try "# Launch plan\n\nShip on Tuesday.\n".write(to: v.appending(path: "Projects/Launch plan.md"), atomically: true, encoding: .utf8)
+        try "# On revision\n\nAn essay.\n".write(to: v.appending(path: "Projects/Drafts/On revision.md"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: v.appending(path: "Journal"), withIntermediateDirectories: true)
+        try "# Monday\n\nSlept well.\n".write(to: v.appending(path: "Journal/Monday.md"), atomically: true, encoding: .utf8)
         try """
         # Field notes on revision
 

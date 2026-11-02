@@ -282,14 +282,15 @@ final class Workspace {
         resolved(hunks, .unreviewed)
     }
 
-    func create() {
+    func create(in folder: URL? = nil) {
+        let folder = folder ?? vault
         var name = "Untitled"
         var n = 2
-        while FileManager.default.fileExists(atPath: vault.appending(path: "\(name).md").path) {
+        while FileManager.default.fileExists(atPath: folder.appending(path: "\(name).md").path) {
             name = "Untitled \(n)"
             n += 1
         }
-        let url = vault.appending(path: "\(name).md")
+        let url = folder.appending(path: "\(name).md")
         try? "# \n".write(to: url, atomically: true, encoding: .utf8)
         refresh()
         open(url)

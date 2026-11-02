@@ -5,7 +5,7 @@ References studied: Writer Computer's repo (github.com/joelbqz/writer-computer, 
 Phases:
 1. [x] API is one URL + key; prose skill bundled (`Brand/Prose`).
 2. [x] Live preview editor. Inline markers hide off the caret line. Bullets, task boxes, and rules are drawn ornaments over transparent source, so no reflow. Task boxes click to toggle with undo; boxes are monospace so both states line up. Links and [[wikilinks]] (with |alias) open on click off the caret line, and a missing note is created. ==highlight==. Code and highlight are rounded chips; fenced code sits on a panel. Tests: PreviewTests (real mouse events), MarkupTests. Frames: 8.3 ms worst, every phase.
-3. [ ] Chrome: folder tree sidebar, status bar (words, reading time, selection), sidebar toggle, bottom fade, edited date.
+3. [x] Chrome: folder tree sidebar (folders first, notes by recency, short times, the open note's folders auto-expand, expansion remembered, "New Note Here"); search lists folder and time; status line bottom right (words, minutes, "N of M words" for a selection; hides while the co-writer works); bottom fade; sidebar toggle in the titlebar. Edited date skipped: the status line carries enough. Live window check pending: Quill sat in the Stage Manager strip while the user worked, so the titlebar toggle is unverified.
 4. [ ] Section rail: heading ticks, current one bright, hover lists headings, click jumps.
 5. [ ] Co-writer depth: show what it read (sources under the reply, clickable), @ mentions in the command bar, [[ autocomplete.
 
