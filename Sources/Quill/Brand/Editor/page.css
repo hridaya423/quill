@@ -1,0 +1,116 @@
+@font-face {
+  font-family: "EB Garamond";
+  src: url("../EBGaramond.ttf");
+  font-weight: 400 800;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "EB Garamond";
+  src: url("../EBGaramond-Italic.ttf");
+  font-weight: 400 800;
+  font-style: italic;
+}
+
+:root {
+  --paper: #FAF7F3;
+  --sheet: #F3F0E9;
+  --ink: #221D18;
+  --soft: #69625B;
+  --faint: #C2BDB5;
+  --rule: #E1DDD7;
+  --accent: #A83825;
+  --mark: #FCE4D9;
+  --selection: #E6E0D6;
+  --serif: "EB Garamond", "New York", ui-serif, Georgia, serif;
+  --sans: -apple-system-body, -apple-system, system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --face: var(--serif);
+  --size: 20px;
+  --leading: 1.55;
+  --tracking: 0;
+  --column: 620px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #191714;
+    --sheet: #22201D;
+    --ink: #E9E6DF;
+    --soft: #B9B5AE;
+    --faint: #484440;
+    --rule: #302D2A;
+    --accent: #F5A083;
+    --mark: #3D241E;
+    --selection: #3A3631;
+    color-scheme: dark;
+  }
+}
+
+:root[data-face="sans"] {
+  --face: var(--sans);
+  --size: 17px;
+  --leading: 1.75;
+  --tracking: -0.011em;
+  --column: 680px;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+#page { min-height: 100%; }
+
+.cm-editor {
+  --pm-header-mark-color: var(--faint);
+  --pm-link-color: var(--accent);
+  --pm-muted-color: var(--soft);
+  --pm-code-background-color: var(--sheet);
+  --pm-code-font: var(--mono);
+  --pm-code-btn-background-color: var(--sheet);
+  --pm-code-btn-hover-background-color: var(--rule);
+  --pm-blockquote-vertical-line-background-color: var(--rule);
+  --pm-cursor-color: var(--accent);
+  --pm-syntax-link: var(--accent);
+  --pm-syntax-comment: var(--soft);
+  background: transparent;
+  color: var(--ink);
+  outline: none;
+}
+
+.cm-editor.cm-focused { outline: none; }
+
+.cm-editor .cm-scroller {
+  font-family: var(--face);
+  line-height: var(--leading);
+}
+
+.cm-editor .cm-content {
+  box-sizing: border-box;
+  max-width: calc(var(--column) + 128px);
+  margin: 0 auto;
+  padding: 96px 64px 45vh;
+  font-family: var(--face);
+  font-size: var(--size);
+  letter-spacing: var(--tracking);
+  caret-color: var(--accent);
+  color: var(--ink);
+}
+
+.cm-editor .cm-line { padding: 0; }
+
+.cm-editor .cm-cursorLayer .cm-cursor {
+  border-left: 2px solid var(--accent);
+}
+
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
+.cm-editor .cm-content ::selection {
+  background: var(--selection);
+}
+
+.cm-editor .cm-activeLine { background: transparent; }

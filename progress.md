@@ -136,3 +136,16 @@ Research notes with sources: HIG, WWDC25, iA, Butterick, Rauno, Emil Kowalski, Z
 - Three crashes (10:28, 11:04, 11:18) raised in `_postWindowNeedsUpdateConstraints`: an NSHostingView requested constraint updates during a layout, update-constraints, or display pass. The 11:18 trace runs through the SwiftUI ScrollView the outline card inserted on hover.
 - Fix (fcd03fe): the card lists 14 sections around the current one with no ScrollView. Rail, status, and command bar hosts set `safeAreaRegions = []`.
 - Not reproduced in tests. `RailTests` stresses hover, jump, and scroll in an app-shaped window and checks margin clicks still reach the text. Live check: watch for new `Quill-*.ips` in DiagnosticReports.
+
+## Editor port to CodeMirror 6 + ProseMark (decided 2026-11-02)
+Research: Obsidian, writer.computer (Tauri + React + CM6 + ProseMark, GPL-3.0, so copy nothing), and MarkEdit (CM6 in WKWebView) all use CodeMirror 6. Native options: nodes-app/swift-markdown-engine (Apache-2.0, internal text view, would need a fork), contexthub-dev/swift-markdown-editor (new, 0 stars). The user chose CM6 + upstream @prosemark/core (MIT, npm).
+
+Layout: `web/` holds the TypeScript editor; `node web/build.mjs` bundles it into `Sources/Quill/Brand/Editor/` (committed, so SwiftPM needs no Node). `Page` (WKWebView) keeps a synchronous NSString mirror of the text and selection. JS posts `change` and `select`; Swift calls `quill.load/apply/select`.
+
+Phases:
+1. Spike: done. PageTests prove mirror sync, render snapshots (serif and sans), and typing p50 about 1 ms.
+2. Polish the page: no fold gutter, wikilinks, blank-line rhythm, code padding, task boxes, quote bar, caret. Compare against writer.computer.
+3. Swap Page into EditorController in place of QuillTextView: open and save, word count, outline and rail (positions from JS), [[ completion, links, undo.
+4. Agent features in JS: review hunks as decorations with keep and revert, Choreographer (strike, lift, type-in) as CSS animation, margin notes, presence (focused paragraph), held tells.
+5. Overlays: cards that track text move into the page or follow JS-posted rects.
+6. Delete QuillTextView, Markup styling, Choreographer layers. Update FrameTests, PreviewTests, TypingBenchmark, and Snapshots.
