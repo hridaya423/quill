@@ -153,6 +153,7 @@ final class Workspace {
         editor.onResolve = { [weak self] hunks, outcome in self?.resolved(hunks, outcome) }
         editor.onUndo = { name, back in Ledger.event(back ? "undo" : "redo", detail: name) }
         editor.onOpenNote = { [weak self] link in self?.follow(link) }
+        editor.noteTitles = { [weak self] in self?.notes.map(\.title) ?? [] }
     }
 
     func replace(_ agent: Agent) {

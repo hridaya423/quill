@@ -236,6 +236,48 @@ final class QuillTextView: NSTextView {
     override func insertText(_ string: Any, replacementRange: NSRange) {
         _ = beforeKey?(nil)
         super.insertText(string, replacementRange: replacementRange)
+        let typed = (string as? String) ?? (string as? NSAttributedString)?.string ?? ""
+        if typed == "[", let partial = wikiPartial(), partial.length == 0 {
+            DispatchQueue.main.async { [weak self] in self?.complete(nil) }
+        }
+    }
+
+    var noteTitles: () -> [String] = { [] }
+
+    func wikiPartial() -> NSRange? {
+        let text = string as NSString
+        let caret = selectedRange()
+        guard caret.length == 0, caret.location >= 2 else { return nil }
+        let line = text.lineRange(for: NSRange(location: caret.location, length: 0))
+        let before = text.substring(with: NSRange(location: line.location, length: caret.location - line.location))
+        guard let open = before.range(of: "[[", options: .backwards), !before[open.upperBound...].contains("]") else { return nil }
+        let start = line.location + (before[..<open.upperBound] as Substring).utf16.count
+        return NSRange(location: start, length: caret.location - start)
+    }
+
+    override var rangeForUserCompletion: NSRange {
+        wikiPartial() ?? super.rangeForUserCompletion
+    }
+
+    override func completions(forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
+        guard charRange == wikiPartial() else { return super.completions(forPartialWordRange: charRange, indexOfSelectedItem: index) }
+        let typed = (string as NSString).substring(with: charRange).lowercased()
+        let titles = noteTitles().filter { typed.isEmpty || $0.lowercased().contains(typed) }
+        index.pointee = titles.isEmpty ? -1 : 0
+        return titles.sorted { a, b in
+            let pa = a.lowercased().hasPrefix(typed), pb = b.lowercased().hasPrefix(typed)
+            return pa != pb ? pa : false
+        }
+    }
+
+    override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange, movement: Int, isFinal flag: Bool) {
+        let wiki = charRange == wikiPartial() || (string as NSString).substring(to: charRange.location).hasSuffix("[[")
+        guard wiki, flag, movement != NSTextMovement.cancel.rawValue else {
+            return super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
+        }
+        let rest = string as NSString
+        let closed = NSMaxRange(charRange) + 2 <= rest.length && rest.substring(with: NSRange(location: NSMaxRange(charRange), length: 2)) == "]]"
+        super.insertCompletion(closed ? word : word + "]]", forPartialWordRange: charRange, movement: movement, isFinal: flag)
     }
 
     @objc func undo(_ sender: Any?) { step(back: true) }

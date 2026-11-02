@@ -48,4 +48,16 @@ struct PreviewTests {
         view.setSelectedRange(NSRange(location: 1, length: 0))
         #expect((storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont)?.pointSize ?? 0 > 10)
     }
+
+    @Test func doubleBracketCompletesNoteTitlesAndCloses() {
+        let (view, _) = editor("See ")
+        view.noteTitles = { ["Groceries", "Typography", "pitch"] }
+        view.insertText("[[Ty", replacementRange: view.selectedRange())
+        let partial = view.rangeForUserCompletion
+        var index = 0
+        let found = view.completions(forPartialWordRange: partial, indexOfSelectedItem: &index)
+        #expect(found == ["Typography"])
+        view.insertCompletion("Typography", forPartialWordRange: partial, movement: NSTextMovement.return.rawValue, isFinal: true)
+        #expect(view.string == "See [[Typography]]")
+    }
 }

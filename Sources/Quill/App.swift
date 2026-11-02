@@ -525,6 +525,7 @@ final class EditorController: NSViewController {
     private var chord = false
     private var lastKey: CFAbsoluteTime = 0
     private var counted = -1
+    private var tally: DispatchWorkItem?
 
     init(ws: Workspace) {
         self.ws = ws
@@ -642,11 +643,17 @@ final class EditorController: NSViewController {
         let length = (text.string as NSString).length
         guard !selection || length != counted else { return }
         counted = length
-        let words = wordCount(text.string)
-        if chrome.words != words { chrome.words = words }
-        let headings = outline(text.string as NSString)
-        if chrome.headings != headings { chrome.headings = headings }
-        locate()
+        tally?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let words = wordCount(text.string)
+            if chrome.words != words { chrome.words = words }
+            let headings = outline(text.string as NSString)
+            if chrome.headings != headings { chrome.headings = headings }
+            locate()
+        }
+        tally = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (chrome.words == 0 ? 0 : 0.2), execute: work)
     }
 
     func locate() {
