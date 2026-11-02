@@ -986,7 +986,7 @@ final class EditorController: NSViewController {
 func stamp(_ date: Date, now: Date = .now, short: Bool = false) -> String {
     let cal = Calendar.current
     if cal.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
-    if cal.isDateInYesterday(date) { return "Yesterday" }
+    if cal.isDateInYesterday(date), !short { return "Yesterday" }
     if let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: now)).day, days < 7 {
         return date.formatted(.dateTime.weekday(short ? .abbreviated : .wide))
     }
@@ -1291,6 +1291,7 @@ struct Branch: View {
                 } icon: {
                     Image(systemName: "doc.text").font(.system(size: 12, weight: .light)).foregroundStyle(Color.soft)
                 }
+                .layoutPriority(1)
                 Spacer(minLength: 4)
                 TimelineView(.everyMinute) { _ in
                     Text(stamp(note.modified, short: true))
