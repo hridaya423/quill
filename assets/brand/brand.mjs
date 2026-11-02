@@ -63,3 +63,24 @@ const banner = (dark) => {
 };
 writeFileSync(join(here, '../../.github/assets/banner-light.svg'), banner(false));
 writeFileSync(join(here, '../../.github/assets/banner-dark.svg'), banner(true));
+
+const social = () => {
+  const s = 132 / wh;
+  const mark = `<g transform="translate(${640 - (wx + ww / 2) * s} ${142 - wy * s}) scale(${s})">${svg(wordmark, sky)}</g>`;
+  const type = `font-family="Quill Rounded, ui-rounded, system-ui" text-anchor="middle"`;
+  return `<svg viewBox="0 0 1280 640" width="1280" height="640" xmlns="http://www.w3.org/2000/svg">`
+    + `<defs><radialGradient id="air" cx="640" cy="500" r="820" gradientUnits="userSpaceOnUse"><stop stop-color="${blue}" stop-opacity=".5"/><stop offset=".55" stop-color="${blue}" stop-opacity=".12"/><stop offset="1" stop-color="${blue}" stop-opacity="0"/></radialGradient>`
+    + `<radialGradient id="sun" cx="640" cy="496" r="520" gradientTransform="translate(0 496) scale(1 .38) translate(0 -496)" gradientUnits="userSpaceOnUse"><stop stop-color="${sky}" stop-opacity=".5"/><stop offset=".4" stop-color="${sky}" stop-opacity=".12"/><stop offset="1" stop-color="${sky}" stop-opacity="0"/></radialGradient>`
+    + `<linearGradient id="land" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${sky}"/><stop offset=".012" stop-color="${blue}"/><stop offset=".07" stop-color="#16263B"/><stop offset=".25" stop-color="${night}"/></linearGradient>`
+    + `<filter id="halo" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="10"/></filter></defs>`
+    + `<rect width="1280" height="640" fill="${night}"/><rect width="1280" height="640" fill="url(#air)"/><rect width="1280" height="640" fill="url(#sun)"/>`
+    + `<ellipse cx="640" cy="1380" rx="1240" ry="884" fill="none" stroke="${sky}" stroke-width="10" stroke-opacity=".55" filter="url(#halo)"/>`
+    + `<ellipse cx="640" cy="1380" rx="1240" ry="884" fill="url(#land)"/>`
+    + `<ellipse cx="640" cy="1380" rx="1240" ry="884" fill="none" stroke="${sky}" stroke-width="2"/>`
+    + mark
+    + `<text x="640" y="350" ${type} font-size="42" font-weight="700" fill="${cloud}">Say a change. Your AI types it into your draft.</text>`
+    + `<text x="640" y="398" ${type} font-size="24" font-weight="500" fill="${cloud}" fill-opacity=".64">Claude Code, Codex, and Cursor edit in place. You keep or revert each change.</text>`
+    + `<text x="640" y="584" ${type} font-size="21" font-weight="600" fill="${sky}" fill-opacity=".8">Free for macOS 26  ·  github.com/hridaya423/quill</text>`
+    + `</svg>\n`;
+};
+writeFileSync(join(here, '../../.github/assets/social.svg'), social());

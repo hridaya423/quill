@@ -12,6 +12,9 @@ for scale in 1 2; do
   printf '<!doctype html><style>html,body{margin:0}img{display:block;width:660px;height:420px}</style><img src="%s">' "$PWD/assets/dmg/background.svg" > "$work/dmg.html"
   "$chrome" --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=$scale --window-size=660,420 --screenshot="$work/dmg@$scale.png" "file://$work/dmg.html" >/dev/null 2>&1
 done
+{ printf '<!doctype html><style>@font-face{font-family:"Quill Rounded";src:url(file:///System/Library/Fonts/SFNSRounded.ttf)}html,body{margin:0}svg{display:block}</style>'; cat .github/assets/social.svg; } > "$work/social.html"
+"$chrome" --headless=new --disable-gpu --hide-scrollbars --allow-file-access-from-files --window-size=1280,640 --screenshot="$work/social.png" "file://$work/social.html" >/dev/null 2>&1
+cp "$work/social.png" .github/assets/social.png
 tiffutil -cathidpicheck "$work/dmg@1.png" "$work/dmg@2.png" -out assets/dmg/background.tiff >/dev/null
 set=$work/Quill.iconset
 mkdir -p "$set"
