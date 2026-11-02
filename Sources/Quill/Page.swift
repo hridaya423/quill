@@ -21,8 +21,6 @@ final class Page: WKWebView {
     private(set) var isPlaying = false
     private var crossed: [Hunk] = []
     private(set) var top: CGFloat = 0
-    private(set) var anchor = 0
-    private(set) var atEnd = false
 
     var focused: Int? {
         didSet { if focused != oldValue { pushHunks() } }
@@ -36,7 +34,6 @@ final class Page: WKWebView {
     var onHover: ((Int?) -> Void)?
     var onOpenNote: ((String) -> Void)?
     var onPlayed: ((Int) -> Void)?
-    var onScroll: (() -> Void)?
     var onKeep: ((Int) -> Void)?
     var onRevert: ((Int) -> Void)?
     var onCardHover: ((Bool) -> Void)?
@@ -101,10 +98,6 @@ final class Page: WKWebView {
 
     func reveal(_ range: NSRange) {
         call("quill.reveal(\(range.location), \(version))")
-    }
-
-    func glide(to location: Int) {
-        call("quill.glide(\(location), \(version))")
     }
 
     func present(_ range: NSRange?) {
@@ -252,9 +245,6 @@ final class Page: WKWebView {
             caret(body)
         case "scroll":
             top = body["top"] as? CGFloat ?? 0
-            anchor = body["anchor"] as? Int ?? 0
-            atEnd = body["atEnd"] as? Bool ?? false
-            onScroll?()
         case "error":
             NSLog("Quill page: %@", body["message"] as? String ?? "")
         case "played":

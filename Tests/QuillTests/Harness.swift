@@ -20,9 +20,9 @@ func openPage(_ text: String, dark: Bool = false, face: String = "sans") async t
 }
 
 @MainActor
-func until(_ timeout: Double = 4, _ done: () -> Bool) async throws {
+func until(_ timeout: Double = 4, _ done: () async -> Bool) async throws {
     let start = Date()
-    while !done() {
+    while await !done() {
         guard Date().timeIntervalSince(start) < timeout else {
             Issue.record("timed out")
             return

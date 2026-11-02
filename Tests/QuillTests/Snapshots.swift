@@ -120,6 +120,7 @@ struct Snapshots {
             editor.chrome.hinting = false
 
             func shot(_ name: String) async {
+                try? await still(editor.text)
                 try? await Task.sleep(for: .milliseconds(450))
                 await Self.render(w.contentView!, name, dark: dark)
             }
@@ -129,16 +130,11 @@ struct Snapshots {
                 let r = editor.text.buffer.range(of: "What to cut")
                 editor.text.setSelectedRange(NSRange(location: r.location + 3, length: 0))
                 await shot("type")
-                editor.text.scrollToEndOfDocument(nil)
+                _ = try? await editor.text.evaluateJavaScript("quill.view.scrollDOM.scrollTop = 1e6")
                 await shot("type-end")
-                editor.chrome.outlining = true
-                let outline = NSHostingView(rootView: Rail(chrome: editor.chrome) { _ in }.padding(30).background(Color(nsColor: Theme.paper)))
-                outline.frame = NSRect(origin: .zero, size: outline.fittingSize)
-                let ow = Self.window(outline.fittingSize, dark: dark)
-                ow.contentView = outline
-                try? await Task.sleep(for: .milliseconds(300))
-                await Self.render(outline, "rail-open", dark: dark)
-                editor.chrome.outlining = false
+                _ = try? await editor.text.evaluateJavaScript("quill.view.scrollDOM.scrollTop = 0; const s = document.createElement('style'); s.id = 'open'; s.textContent = '.cm-rail .cm-rail-card { opacity: 1; transform: none } .cm-rail .cm-rail-tick { opacity: .35 }'; document.head.appendChild(s)")
+                await shot("rail-open")
+                _ = try? await editor.text.evaluateJavaScript("document.getElementById('open').remove()")
                 ws.open(ws.notes.first(where: { $0.title == "pitch" })!.url)
             }
             editor.chrome.hinting = true

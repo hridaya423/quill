@@ -16,6 +16,7 @@ import { notes, setNotes, type NoteSpec } from './notes';
 import { stage, presenceTracker, present, sweep, play, land, playing } from './stage';
 import { post, step, type Edit, type Step } from './bridge';
 import { heading, wrap } from './format';
+import { outline } from './outline';
 
 let generation = 0;
 let version = 0;
@@ -60,10 +61,7 @@ const bridge = EditorView.updateListener.of((u) => {
 });
 
 function viewport() {
-  const s = view.scrollDOM;
-  const rect = s.getBoundingClientRect();
-  const anchor = view.posAtCoords({ x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.25 }, false);
-  post({ type: 'scroll', generation, top: s.scrollTop, anchor, atEnd: s.scrollTop + s.clientHeight >= s.scrollHeight - 4 });
+  post({ type: 'scroll', generation, top: view.scrollDOM.scrollTop });
 }
 
 const editable = new Compartment();
@@ -101,6 +99,7 @@ const extensions = [
   notes,
   stage,
   presenceTracker,
+  outline,
   drawSelection(),
   editable.of(EditorView.editable.of(true)),
   EditorView.lineWrapping,
@@ -178,12 +177,6 @@ const quill = {
   },
   reveal(pos: number, base: number) {
     view.dispatch({ effects: EditorView.scrollIntoView(mapPos(pos, base), { y: 'nearest', yMargin: 96 }) });
-  },
-  glide(pos: number, base: number) {
-    const block = view.lineBlockAt(mapPos(pos, base));
-    const top = Math.max(0, block.top + view.documentTop - view.scrollDOM.getBoundingClientRect().top + view.scrollDOM.scrollTop - 64);
-    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    view.scrollDOM.scrollTo({ top, behavior: still ? 'auto' : 'smooth' });
   },
   hunks(list: HunkSpec[], focused: number | null, base: number) {
     view.dispatch({ effects: setHunks.of({ list: list.map((h) => ({ ...h, from: mapPos(h.from, base, -1), to: mapPos(h.to, base) })), focused }) });

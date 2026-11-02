@@ -35,36 +35,40 @@ func openingTheOutlineKeepsTheWindowLayoutStable(height: Int) async throws {
     window.setFrameOrigin(NSPoint(x: -6000, y: 200))
     ws.refresh()
     ws.open(note)
-    try await Task.sleep(for: .milliseconds(400))
-    #expect(editor.chrome.headings.count == 30)
-    let rail = try #require(editor.view.subviews.first { $0 is NSHostingView<Rail> })
-    let margin = rail.convert(NSPoint(x: rail.bounds.width + 60, y: rail.bounds.midY), to: nil)
-    #expect(window.contentView!.superview!.hitTest(margin).map { $0 is Page || $0.isDescendant(of: editor.text) } == true)
-    for _ in 0..<8 {
-        withAnimation(.easeOut(duration: 0.16)) { editor.chrome.outlining.toggle() }
-        for _ in 0..<12 {
-            try await Task.sleep(for: .milliseconds(16))
-            window.displayIfNeeded()
-        }
+    let page = editor.text!
+    func js(_ script: String) async throws -> Any? { try await page.evaluateJavaScript(script) }
+    try await until(8) {
+        guard page.ready else { return false }
+        return (try? await js("document.querySelectorAll('.cm-rail-tick').length")) as? Int == 30
     }
-    editor.chrome.outlining = true
-    for h in editor.chrome.headings.shuffled().prefix(6) {
-        editor.jump(to: h)
-        for _ in 0..<25 {
-            try await Task.sleep(for: .milliseconds(16))
-            window.displayIfNeeded()
-        }
+    func on() async throws -> Int { try await js("[...document.querySelectorAll('.cm-rail-tick')].findIndex(t => t.classList.contains('cm-rail-on'))") as? Int ?? -2 }
+    func offset(_ n: Int) async throws -> Double {
+        try await js("(() => { const v = quill.view; const at = v.state.doc.toString().indexOf('## Section \(n)\\n'); const c = v.coordsAtPos(at); return c ? c.top - v.scrollDOM.getBoundingClientRect().top : null })()") as? Double ?? .nan
     }
-    for y in stride(from: 0, through: 3000, by: 120) {
-        _ = try await editor.text.evaluateJavaScript("quill.view.scrollDOM.scrollTop = \(y)")
-        try await Task.sleep(for: .milliseconds(16))
-        window.displayIfNeeded()
+    #expect(try await js("quill.view.scrollDOM.scrollHeight > quill.view.scrollDOM.clientHeight * 2 && document.scrollingElement.scrollHeight <= innerHeight") as? Bool == true)
+    #expect(try await js("document.querySelectorAll('.cm-rail-tick').length") as? Int == 30)
+    try await still(page)
+    try await until { (try? await on()) == 0 }
+    for n in [25, 3, 17] {
+        _ = try await js("document.querySelectorAll('.cm-rail-row')[\(n - 1)].click()")
+        try await still(page)
+        try await until { (try? await offset(n)).map { abs($0 - 64) < 3 } ?? false }
+        #expect(abs(try await offset(n) - 64) < 3)
+        try await until { (try? await on()) == n - 1 }
+        let line = page.buffer.range(of: "## Section \(n)\n")
+        #expect(page.selectedRange() == NSRange(location: NSMaxRange(line) - 1, length: 0))
     }
-    editor.chrome.outlining = false
-    for _ in 0..<12 {
-        try await Task.sleep(for: .milliseconds(16))
-        window.displayIfNeeded()
+    _ = try await js("document.querySelectorAll('.cm-rail-row')[29].click()")
+    try await still(page)
+    try await until { await (try? js("quill.view.scrollDOM.scrollTop + quill.view.scrollDOM.clientHeight >= quill.view.scrollDOM.scrollHeight - 2")) as? Bool == true }
+    try await until { (try? await on()) == 29 }
+    for n in [8, 22] {
+        _ = try await js("(() => { const v = quill.view; const at = v.state.doc.toString().indexOf('## Section \(n)\\n'); v.scrollDOM.scrollTop += v.lineBlockAt(at).top + v.documentTop - v.scrollDOM.getBoundingClientRect().top - 40 })()")
+        try await until { (try? await on()) == n - 1 }
     }
-    #expect(window.contentView!.superview!.hitTest(margin).map { $0 is Page || $0.isDescendant(of: editor.text) } == true)
+    _ = try await js("quill.view.scrollDOM.scrollTop = 0")
+    try await until { (try? await on()) == 0 }
+    let margin = page.convert(NSPoint(x: 70, y: page.bounds.midY), to: nil)
+    #expect(window.contentView!.superview!.hitTest(margin).map { $0.isDescendant(of: page) } == true)
     window.close()
 }

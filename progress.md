@@ -136,6 +136,19 @@ Research notes with sources: HIG, WWDC25, iA, Butterick, Rauno, Emil Kowalski, Z
 - Three crashes (10:28, 11:04, 11:18) raised in `_postWindowNeedsUpdateConstraints`: an NSHostingView requested constraint updates during a layout, update-constraints, or display pass. The 11:18 trace runs through the SwiftUI ScrollView the outline card inserted on hover.
 - Fix (fcd03fe): the card lists 14 sections around the current one with no ScrollView. Rail, status, and command bar hosts set `safeAreaRegions = []`.
 - Not reproduced in tests. `RailTests` stresses hover, jump, and scroll in an app-shaped window and checks margin clicks still reach the text. Live check: watch for new `Quill-*.ips` in DiagnosticReports.
+- 13:06 crash after the CM6 port: same signature, thrown from `NSHostingView.updateConstraints`. The fix above did not hold.
+
+## Section rail moved into the page (2026-11-02)
+- Cause of "jump does nothing": `#page` had `min-height`, so `.cm-scroller` grew to the full document (3800 px in a 1000 px window) and the body scrolled. Every `scrollDOM.scrollTo`, scroll-message `top`, and stage auto-scroll targeted an element that never scrolls. Fix: `#page` and `.cm-editor` are `height: 100%`.
+- Cause of the crash: the SwiftUI `Rail` host. It is deleted, with `chrome.headings/section/outlining`, `locate`, `jump`, `Page.anchor/atEnd/onScroll`, and `glide`.
+- `web/src/outline.ts` now draws the ticks and the card in `.cm-editor`. Headings come from the Lezer tree (ATX and setext, level ≤ 3; level ≤ 2 when there are more than 32). The current section is the last heading above a reading line 96 px below the top. A row click sets the caret at the heading's end and glides there, re-targeting each frame as CodeMirror measures real line heights. Reduce Motion and hidden pages use `scrollIntoView`. The card opens on `:hover` or `:focus-within`.
+- Evidence:
+  - `RailTests` jumps to sections 25, 3, 17 and 30 at window heights 420, 560 and 820, and asserts each heading's text lands 64 px from the top, the tick and the caret follow, and scrolling marks sections 8, 22 and 1.
+  - With the old CSS restored, `RailTests` fails on the scroller check.
+  - `scripts/test.sh`: 31 app and 57 core tests pass. Typing p50 is 1 ms.
+  - Snapshots `rail-open` (light and dark) were inspected.
+  - The release build shows the ticks live.
+- Live check left: hover the rail, click a row, and watch DiagnosticReports for new `Quill-*.ips`.
 
 ## Editor port to CodeMirror 6 + ProseMark (decided 2026-11-02)
 Research: Obsidian, writer.computer (Tauri + React + CM6 + ProseMark, GPL-3.0, so copy nothing), and MarkEdit (CM6 in WKWebView) all use CodeMirror 6. Native options: nodes-app/swift-markdown-engine (Apache-2.0, internal text view, would need a fork), contexthub-dev/swift-markdown-editor (new, 0 stars). The user chose CM6 + upstream @prosemark/core (MIT, npm).
