@@ -1,34 +1,46 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { barbs, feather, spline } from './feather.mjs';
+import { curve, hairline, oval, ribbon } from './nib.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const out = (name, text) => writeFileSync(join(here, name), text);
+const smooth = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
 
-export const spectrum = [[0, '#FFD08A'], [0.25, '#FF8A3D'], [0.55, '#FF3F5E'], [0.8, '#C2338F'], [1, '#6E4BFF']];
+export const colors = { ink: '#15120F', paper: '#F4EADB', ember: '#FF5B36' };
 
-const path = spline([[701, 586], [732, 470], [701, 354], [616, 269], [500, 238], [384, 269], [299, 354], [268, 470], [299, 586], [384, 671], [500, 702], [612, 716], [716, 760], [812, 830]]);
-const hero = { width: 106, inner: 0.34, barbs: 340, stroke: 2.5, alpha: 0.96, curl: 0.24, angle: 0.66, shaftWidth: 5, nib: 3, vane: 0.775,
-  shaftOpacity: 0.92, jitter: 1, splits: [[0.22, 1], [0.41, 1], [0.6, 1]], colors: spectrum };
-const bold = { ...hero, barbs: 120, stroke: 11, width: 120, inner: 0.45, jitter: 0, splits: [], shaftWidth: 0.1, nib: 260, shaftOpacity: 1, alpha: 1 };
+const nib = { nib: 104, angle: 0.62 };
+const shape = { cx: 498, cy: 466, rx: 196, ry: 246, tilt: 0.16 };
+const from = hairline(shape, nib.angle, -Math.PI * 0.74);
+const bowl = oval({ ...shape, from, sweep: -Math.PI * 2 });
+const tail = curve([420, 656], [520, 736], [680, 746], [846, 836]);
+const dip = 0.815;
+const tailPressure = (u) => 0.62 * smooth(0, 0.3, u) * (1 - 0.99 * smooth(0.3, 1, u) ** 0.9);
 
-const defs = `
-<linearGradient id="ink" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2B2521"/><stop offset="1" stop-color="#0F0C0B"/></linearGradient>
-<radialGradient id="ember" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#FF7A3A" stop-opacity=".9"/><stop offset=".5" stop-color="#E8307A" stop-opacity=".35"/><stop offset="1" stop-color="#7A4DFF" stop-opacity="0"/></radialGradient>
-<linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".14"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/></linearGradient>
-<filter id="soft" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><feGaussianBlur stdDeviation="50"/></filter>
-<clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>`;
+const mark = (fill) =>
+  `<path d="${ribbon(bowl, { ...nib, pressure: () => 1 })}" fill="${fill}"/>` +
+  `<path d="${ribbon(tail, { ...nib, pressure: tailPressure }, [0, dip + 0.005])}" fill="${fill}"/>` +
+  `<path d="${ribbon(tail, { ...nib, pressure: tailPressure }, [dip, 1])}" fill="${colors.ember}"/>`;
 
-const svg = (body) => `<svg viewBox="0 0 1024 1024" width="1024" height="1024" xmlns="http://www.w3.org/2000/svg"><defs>${defs}</defs>${body}</svg>\n`;
+const svg = (body) => `<svg viewBox="0 0 1024 1024" width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">${body}</svg>\n`;
+const tile = `<defs><linearGradient id="light" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#211C18"/><stop offset=".5" stop-color="${colors.ink}"/></linearGradient></defs>
+<rect x="100" y="100" width="824" height="824" rx="186" fill="url(#light)"/>
+<rect x="101" y="101" width="822" height="822" rx="185" fill="none" stroke="#FFFFFF" stroke-opacity=".07" stroke-width="2"/>`;
 
-const tile = (body) => `<g clip-path="url(#tile)"><rect x="100" y="100" width="824" height="824" fill="url(#ink)"/>${body}<rect x="100" y="100" width="824" height="824" fill="url(#sheen)"/></g>
-<rect x="101" y="101" width="822" height="822" rx="185" fill="none" stroke="#ffffff14" stroke-width="2"/>`;
+writeFileSync(join(here, 'icon.svg'), svg(tile + mark(colors.paper)));
+writeFileSync(join(here, 'mark.svg'), svg(mark(colors.paper)));
+writeFileSync(join(here, 'mark-ink.svg'), svg(mark(colors.ink)));
 
-const glow = `<circle cx="500" cy="470" r="250" fill="url(#ember)" filter="url(#soft)" opacity=".55"/>`;
-const nibGlow = `<circle cx="800" cy="818" r="56" fill="#FF6A3A" filter="url(#soft)" opacity=".85"/>`;
-
-out('icon.svg', svg(tile(`<g transform="translate(14 22)">${glow}${nibGlow}${feather(path, hero)}<circle cx="811" cy="829" r="5" fill="#FFE2C2"/></g>`)));
-out('icon-small.svg', svg(tile(`<g transform="translate(14 22)">${glow}${feather(path, bold)}</g>`)));
-out('mark.svg', svg(`<g transform="translate(14 22)">${feather(path, hero)}<circle cx="811" cy="829" r="5" fill="#FFE2C2"/></g>`));
-writeFileSync(join(here, '../../Sources/Quill/Brand/feather.json'), JSON.stringify(barbs(path, hero)));
+const sample = (pts, pressure) => {
+  const lens = [0];
+  for (let i = 1; i < pts.length; i++) lens.push(lens[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const total = lens[lens.length - 1];
+  return pts.filter((_, i) => i % 3 === 0 || i === pts.length - 1).map((p) => {
+    const i = pts.indexOf(p);
+    return [Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10, Math.round(pressure(lens[i] / total) * 1000) / 1000];
+  });
+};
+writeFileSync(join(here, '../../Sources/Quill/Brand/mark.json'),
+  JSON.stringify({ nib: nib.nib, angle: nib.angle, dip, bowl: sample(bowl, () => 1), tail: sample(tail, tailPressure) }));
