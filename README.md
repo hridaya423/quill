@@ -10,6 +10,11 @@
 <p align="center">
   <img alt="macOS 26" src="https://img.shields.io/badge/macOS-26-396899?style=flat-square">
   <img alt="Swift 6.2" src="https://img.shields.io/badge/Swift-6.2-396899?style=flat-square">
+  <a href="https://github.com/hridaya423/quill/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/hridaya423/quill?style=flat-square&color=396899"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/hridaya423/quill/releases/latest/download/Quill.dmg"><b>Download for Mac</b></a> · <a href="https://github.com/hridaya423/quill/releases">Releases</a> · <a href="https://github.com/hridaya423/quill/issues">Issues</a>
 </p>
 
 Quill keeps your notes as plain `.md` files in one folder, so Obsidian and other editors open them too. Hold the right ⌥ key and say a change, or press ⌘K and type it. Claude Code, Codex, Cursor, and seven other agents use their own sign-in, so the plan you already pay for works.
@@ -21,7 +26,15 @@ Quill keeps your notes as plain `.md` files in one folder, so Obsidian and other
 
 ## Install
 
-Quill needs macOS 26 and Swift 6.2 or later. Build it from source:
+Quill needs macOS 26 or later.
+
+1. Download [Quill.dmg](https://github.com/hridaya423/quill/releases/latest/download/Quill.dmg) from the latest release.
+2. Open the DMG and drag Quill into Applications.
+3. Open Quill. To talk to it, allow microphone and speech recognition access.
+
+Apple notarized the app, so Gatekeeper opens it with no warning.
+
+To build from source, install Swift 6.2 or later and run:
 
 ```sh
 scripts/bundle.sh release
