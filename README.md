@@ -94,3 +94,7 @@ Quill uses the sign-in of each tool, so your current plan pays for the edits.
 ## Build from source
 
 See [docs/development.md](docs/development.md).
+
+## License
+
+Quill is licensed under the [Apache License 2.0](LICENSE).
