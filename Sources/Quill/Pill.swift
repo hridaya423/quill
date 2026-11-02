@@ -23,6 +23,7 @@ struct Pill: View {
     @Bindable var ws: Workspace
     @Bindable var chrome: Chrome
     @State private var hovering = false
+    @State private var pick = 0
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -240,6 +241,7 @@ struct Pill: View {
                     .opacity(hovering ? 1 : 0.4)
                     .help("Dismiss")
             }
+            if !ws.sources.isEmpty { Sources(ws: ws).padding(.leading, 19) }
             if pending > 0 { reviewRow.padding(.leading, 19) }
         }
         .padding(.vertical, 1)
@@ -269,6 +271,30 @@ struct Pill: View {
                 .frame(width: 470, alignment: .leading)
                 Divider().opacity(0.5)
             }
+            if !suggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(suggestions.enumerated()), id: \.element) { i, m in
+                        Button { accept(m) } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: m.folder ? "folder" : "doc.text")
+                                    .font(.system(size: 11)).foregroundStyle(Color.soft).frame(width: 14)
+                                Text(m.url.deletingPathExtension().lastPathComponent).font(.serif(15)).foregroundStyle(Color.ink).lineLimit(1)
+                                Text((m.insert.trimmingCharacters(in: CharacterSet(charactersIn: " /")) as NSString).deletingLastPathComponent).font(.system(size: 11)).foregroundStyle(Color.soft)
+                                    .lineLimit(1).truncationMode(.head)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(i == pick ? Color.accentInk.opacity(0.1) : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Text("Tab to add · Point Quill at a note or folder").font(.system(size: 10.5)).foregroundStyle(Color.soft).padding(.leading, 8).padding(.top, 3)
+                }
+                .frame(width: 470, alignment: .leading)
+                Divider().opacity(0.5)
+            }
             HStack(spacing: 10) {
                 Image(systemName: "sparkle").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.accentInk)
                 if chrome.selectedWords > 0 {
@@ -287,6 +313,7 @@ struct Pill: View {
                     .focused($focused)
                     .frame(width: chrome.selectedWords > 0 ? 380 : 440)
                     .onSubmit {
+                        if let m = suggestions[safe: pick] { return accept(m) }
                         let words = chrome.draft.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !words.isEmpty else { return }
                         chrome.draft = ""
@@ -294,13 +321,34 @@ struct Pill: View {
                         chrome.remember(words)
                         ws.ask(words)
                     }
-                    .onKeyPress(.upArrow) { step(-1) }
-                    .onKeyPress(.downArrow) { step(1) }
+                    .onKeyPress(.upArrow) { suggestions.isEmpty ? step(-1) : move(-1) }
+                    .onKeyPress(.downArrow) { suggestions.isEmpty ? step(1) : move(1) }
+                    .onKeyPress(.tab) {
+                        guard let m = suggestions[safe: pick] else { return .ignored }
+                        accept(m)
+                        return .handled
+                    }
+                    .onChange(of: chrome.draft) { pick = 0 }
                     .onExitCommand { chrome.commanding = false }
                 Keycap("↩").opacity(chrome.draft.isEmpty ? 0.4 : 1)
             }
         }
         .onAppear { focused = true }
+    }
+
+    private var suggestions: [Mention] {
+        mentionToken(chrome.draft).map { ws.mentions($0) } ?? []
+    }
+
+    private func move(_ delta: Int) -> KeyPress.Result {
+        pick = (pick + delta + suggestions.count) % suggestions.count
+        return .handled
+    }
+
+    private func accept(_ m: Mention) {
+        guard let token = mentionToken(chrome.draft) else { return }
+        chrome.draft = String(chrome.draft.dropLast(token.count)) + m.insert
+        pick = 0
     }
 
     private func step(_ delta: Int) -> KeyPress.Result {
@@ -324,6 +372,38 @@ struct Pill: View {
         while hovering { try? await Task.sleep(for: .milliseconds(300)) }
         guard !Task.isCancelled else { return }
         withAnimation(morph) { ws.phase = .idle }
+    }
+}
+
+struct Sources: View {
+    var ws: Workspace
+
+    var body: some View {
+        let shown = Array(ws.sources.prefix(4))
+        HStack(spacing: 6) {
+            Text("Read").font(.system(size: 11.5)).foregroundStyle(Color.soft)
+            ForEach(shown, id: \.self) { url in
+                Button { ws.reveal(url) } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true ? "folder" : "doc.text").font(.system(size: 10))
+                        Text(url.lastPathComponent).lineLimit(1)
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Color.ink)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.ink.opacity(0.06)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(Press())
+                .help(url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+            }
+            if ws.sources.count > shown.count {
+                Text("+\(ws.sources.count - shown.count) more").font(.system(size: 11.5)).foregroundStyle(Color.soft)
+                    .help(ws.sources.dropFirst(shown.count).map(\.lastPathComponent).joined(separator: ", "))
+            }
+        }
+        .fixedSize()
     }
 }
 
@@ -519,4 +599,8 @@ struct Gloss: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(hunk.old.isEmpty ? "Added text" : "Replaced: \(hunk.old)")
     }
+}
+
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }

@@ -140,6 +140,16 @@ struct Snapshots {
             * Two sentences run past forty words.
             """))
             await shot("said-long")
+            ws.sources = ["Honey/edvideo/README.md", "Honey/edvideo/PLAN.md", "Honey/edvideo/docs", "Honey/edvideo/AGENTS.md", "Honey/edvideo/brand"]
+                .map { URL(fileURLWithPath: NSHomeDirectory()).appending(path: $0) }
+            ws.phase = .said("I drafted the LiveFrame pitch from the README and the plan.")
+            await shot("said-sources")
+            ws.sources = []
+            editor.chrome.draft = "draft a demo pitch from @"
+            editor.chrome.commanding = true
+            await shot("mention")
+            editor.chrome.draft = ""
+            editor.chrome.commanding = false
             ws.phase = .failed("Claude Code stopped responding. Check that Node is installed, then try again.")
             await shot("failed")
             ws.phase = .idle

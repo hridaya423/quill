@@ -21,11 +21,13 @@ struct Reach {
             let request = Request(words: "go into Honey/edvideo and draft a demo video pitch", title: "Pitch", path: file.path, text: base, selection: nil, mode: .guided)
             var reply = ""
             var steps: [String] = []
+            var read: [String] = []
             try await agent.send(prompt(request, canEditFiles: agent.canEditFiles, briefing: Guide.briefing()), file: file, base: base) { e in
                 switch e {
                 case .text(let t): reply += t
                 case .activity(let a): if steps.last != a { steps.append(a) }
                 case .proposed(let next): try? next.write(to: file, atomically: true, encoding: .utf8)
+                case .read(let path): read.append(path)
                 default: break
                 }
             }
@@ -33,6 +35,8 @@ struct Reach {
             Swift.print("[\(id)] steps: \(steps.joined(separator: " → "))\n[\(id)] reply: \(readable(reply))\n[\(id)] draft:\n\(draft)\n")
             #expect(draft.count > base.count + 200, "\(id) wrote no draft")
             #expect(draft.contains("LiveFrame"), "\(id) did not ground the draft in the folder")
+            Swift.print("[\(id)] read: \(read.map { URL(fileURLWithPath: $0).lastPathComponent })")
+            if id != "codex" { #expect(read.contains { $0.hasSuffix("edvideo/README.md") }, "\(id) reported no sources") }
         }
     }
 }

@@ -7,6 +7,7 @@ enum AgentEvent {
     case proposed(String)
     case notes(String)
     case focus(String)
+    case read(String)
 }
 
 struct AgentError: LocalizedError {
@@ -440,8 +441,9 @@ final class ACPAgent: Agent {
             if let old = (call["rawInput"] as? [String: Any])?["old_string"] as? String, !old.isEmpty { events?(.focus(old)) }
             let locations = call["locations"] as? [[String: Any]] ?? []
             let paths = locations.compactMap { $0["path"] as? String }
-            let allowed = paths.count == locations.count
-                && permits(kind: call["kind"] as? String ?? "other", paths: paths, file: file, readable: readable)
+            let kind = call["kind"] as? String ?? "other"
+            let allowed = paths.count == locations.count && permits(kind: kind, paths: paths, file: file, readable: readable)
+            if allowed, kind == "read" { paths.forEach { events?(.read($0)) } }
             let option = allowed
                 ? options.first { $0["kind"] as? String == "allow_once" }
                 : options.first { ($0["kind"] as? String)?.hasPrefix("reject") == true }

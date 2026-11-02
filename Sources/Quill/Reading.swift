@@ -117,6 +117,7 @@ final class Toolbox {
             guard permits(kind: "read", paths: [url.path], file: nil, readable: readable) else {
                 return ToolResult(result: "Quill can't open \(asked). Hidden folders and Library are off limits.", again: true)
             }
+            if FileManager.default.fileExists(atPath: url.path) { events(.read(url.path)) }
             return ToolResult(result: name == "read_file" ? Self.read(url) : Self.list(url), again: true)
         default:
             return ToolResult(result: "There is no tool called \(name).", again: true)

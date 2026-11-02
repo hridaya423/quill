@@ -44,7 +44,7 @@ public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, brief
     }
     lines += ["The note right now:", "<document>", r.text, "</document>", ""]
     lines += [
-        "You can read the writer's other files when they point you at them. Their home folder is \(NSHomeDirectory()). A path they name, like \"Projects/site\", is inside it unless it starts with /. Hidden folders and Library are off limits. Read with your file tools; don't run commands that change anything.",
+        "You can read the writer's other files when they point you at them. Their home folder is \(NSHomeDirectory()). A path they name, like \"Projects/site\" or \"@Projects/site\", is inside it unless it starts with /. Hidden folders and Library are off limits. Read with your file tools; don't run commands that change anything.",
         "When they name a folder or file, open it before you write a word: list the folder, then read the files that explain it, like the README and any plans or docs.",
         "Never invent what a file, folder, or project contains. If you can't find or open something they named, say so in one sentence and write nothing else.",
         "",
@@ -116,4 +116,11 @@ public func notes(from reply: String, in text: String) -> [MarginNote]? {
         return MarginNote(id: i, range: r, quote: quote, note: note, lens: lens)
     }
     .sorted { $0.range.location < $1.range.location }
+}
+
+public func mentionToken(_ draft: String) -> Substring? {
+    guard let at = draft.lastIndex(of: "@") else { return nil }
+    if at > draft.startIndex, !draft[draft.index(before: at)].isWhitespace { return nil }
+    let token = draft[draft.index(after: at)...]
+    return token.contains(where: \.isWhitespace) ? nil : token
 }

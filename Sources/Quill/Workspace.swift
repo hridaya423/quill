@@ -13,6 +13,13 @@ enum Phase: Equatable {
     case failed(String)
 }
 
+struct Mention: Hashable, Identifiable {
+    var url: URL
+    var insert: String
+    var folder: Bool
+    var id: URL { url }
+}
+
 struct Note: Identifiable, Hashable {
     var url: URL
     var modified: Date
@@ -57,6 +64,7 @@ final class Workspace {
     var remedy: (label: String, action: () -> Void)?
     var busy = false
     var live = ""
+    var sources: [URL] = []
     var focusID: Int?
     var model: ModelChoice?
     var models: [ModelChoice] = []
@@ -298,6 +306,54 @@ final class Workspace {
         editor?.window?.makeFirstResponder(editor)
     }
 
+    func mentions(_ token: Substring) -> [Mention] {
+        let home = NSHomeDirectory()
+        func mention(_ url: URL, folder: Bool) -> Mention {
+            let path = url.path.hasPrefix(home + "/") ? String(url.path.dropFirst(home.count + 1)) : url.path
+            return Mention(url: url, insert: path + (folder ? "/" : " "), folder: folder)
+        }
+        if let slash = token.lastIndex(of: "/") {
+            let dir = located(String(token[..<slash]))
+            let prefix = token[token.index(after: slash)...].lowercased()
+            let keys: [URLResourceKey] = [.isDirectoryKey]
+            let items = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
+            return items
+                .filter { prefix.isEmpty || $0.lastPathComponent.lowercased().hasPrefix(prefix) }
+                .filter { browsable($0.path) }
+                .map { mention($0, folder: (try? $0.resourceValues(forKeys: Set(keys)).isDirectory) == true) }
+                .sorted { $0.folder != $1.folder ? $0.folder : $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending }
+                .prefix(7).map { $0 }
+        }
+        let q = token.lowercased()
+        let titled = notes.filter { q.isEmpty || $0.title.lowercased().contains(q) }
+            .sorted { a, b in
+                let pa = a.title.lowercased().hasPrefix(q), pb = b.title.lowercased().hasPrefix(q)
+                return pa != pb ? pa : a.modified > b.modified
+            }
+            .prefix(q.isEmpty ? 5 : 4)
+            .map { mention($0.url, folder: false) }
+        guard !q.isEmpty else { return Array(titled) }
+        let folders = ((try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: home), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
+            .filter { $0.hasDirectoryPath && $0.lastPathComponent.lowercased().hasPrefix(q) && browsable($0.path) }
+            .prefix(3)
+            .map { mention($0, folder: true) }
+        return Array(titled) + folders
+    }
+
+    func cite(_ path: String) {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let skip = [deskFile, keeper.url, Guide.skill].compactMap { $0?.standardizedFileURL.path }
+        guard !skip.contains(where: { url.path == $0 || url.path.hasPrefix($0 + "/") }), !sources.contains(url) else { return }
+        sources.append(url)
+    }
+
+    func reveal(_ url: URL) {
+        if url.pathExtension.lowercased() == "md", url.path.hasPrefix(vault.path) { return open(url) }
+        var folder: ObjCBool = false
+        FileManager.default.fileExists(atPath: url.path, isDirectory: &folder)
+        if folder.boolValue { NSWorkspace.shared.activateFileViewerSelecting([url]) } else { NSWorkspace.shared.open(url) }
+    }
+
     func follow(_ link: String) {
         let name = link.components(separatedBy: "#")[0].trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
@@ -493,6 +549,7 @@ final class Workspace {
         let voice = keeper.notes
         reply = ""
         live = ""
+        sources = []
         margin = []
         if sel.length > 0 { editor.present(editor.paragraph(at: sel.location)) } else { editor.sweep() }
         turnStarted = CFAbsoluteTimeGetCurrent()
@@ -527,6 +584,8 @@ final class Workspace {
                             self.reconcileDesk()
                         case .notes(let json):
                             self.tagged = json
+                        case .read(let path):
+                            self.cite(path)
                         }
                     }
                     guard turn == id else { return }

@@ -41,3 +41,11 @@ let pitch = "# Lumen\n\nWe are basically trying to build a tool.\n\nWriters lose
     #expect(n?.count == 1)
     #expect(n?.first?.lens == "Order")
 }
+
+@Test func mentionsAreTheTrailingAtToken() {
+    #expect(mentionToken("draft a pitch from @Honey/ed") == "Honey/ed")
+    #expect(mentionToken("@") == "")
+    #expect(mentionToken("mail me at sam@site") == nil)
+    #expect(mentionToken("from @Honey/edvideo/ and more") == nil)
+    #expect(mentionToken("no mention") == nil)
+}
