@@ -23,7 +23,7 @@ final class ChatAgent: Agent {
 
     var model: ModelChoice? { models.first { $0.id == preferred } ?? models.first }
 
-    private var key: String? { Keychain.key(for: id) }
+    private var key: String? { Keychain.apiKey }
 
     private func request(_ path: String) -> URLRequest {
         var request = URLRequest(url: URL(string: base + path)!)
@@ -46,7 +46,7 @@ final class ChatAgent: Agent {
 
     func prepare(cwd: URL, readable: [URL]) async throws {
         self.readable = readable
-        guard models.isEmpty, let (data, response) = try? await URLSession.shared.data(for: request("/models")),
+        guard models.isEmpty, !base.isEmpty, let (data, response) = try? await URLSession.shared.data(for: request("/models")),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let list = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["data"] as? [[String: Any]]
         else { return }
@@ -73,9 +73,9 @@ final class ChatAgent: Agent {
     }
 
     func send(_ prompt: String, file: URL?, base doc: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
-        if key == nil, !AgentSpec.named(id).keys.isEmpty { throw AgentError(message: "Add your \(AgentSpec.named(id).name) key in Settings.") }
+        guard !base.isEmpty else { throw AgentError(message: "Add your API's URL in Settings.") }
         if models.isEmpty { try await prepare(cwd: URL(fileURLWithPath: NSHomeDirectory()), readable: readable) }
-        guard let model = preferred else { throw AgentError(message: "\(AgentSpec.named(id).name) didn't list any models. Check the key.") }
+        guard let model = preferred else { throw AgentError(message: "The API didn't list any models. Check the URL and key.") }
         var text = prompt
         if let previous { text = "Earlier in this session:\n\(previous)\n\n" + text }
         var messages: [[String: Any]] = [["role": "system", "content": Tool.system], ["role": "user", "content": text]]

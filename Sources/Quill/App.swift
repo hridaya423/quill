@@ -1074,17 +1074,13 @@ struct AgentBadge: View {
             Divider()
             Menu("Co-writer") {
                 Picker("Co-writer", selection: $ws.agentID) {
-                    ForEach([false, true], id: \.self) { api in
-                        Section(api ? "API keys" : "Agents") {
-                            ForEach(AgentSpec.all.filter { $0.api == api }) { spec in
-                                Label {
-                                    Text(spec.name)
-                                } icon: {
-                                    if let image = Mark.image(spec, dark: false) { Image(nsImage: image) }
-                                }
-                                .tag(spec.id)
-                            }
+                    ForEach(AgentSpec.all) { spec in
+                        Label {
+                            Text(spec.name)
+                        } icon: {
+                            if let image = Mark.image(spec, dark: false) { Image(nsImage: image) }
                         }
+                        .tag(spec.id)
                     }
                 }
                 .pickerStyle(.inline)

@@ -15,7 +15,10 @@ final class AnthropicAgent: Agent {
     private var readable: [URL] = []
     private var live: URLSessionDataTask?
 
-    init(model: String) {
+    let base: String
+
+    init(base: String, model: String) {
+        self.base = base
         chosen = model
     }
 
@@ -56,8 +59,8 @@ final class AnthropicAgent: Agent {
     }
 
     func send(_ prompt: String, file: URL?, base: String, events: @escaping @MainActor (AgentEvent) -> Void) async throws {
-        guard let key = Keychain.key(for: "anthropic"), !key.isEmpty else {
-            throw AgentError(message: "Add your Anthropic API key in Settings.")
+        guard let key = Keychain.apiKey else {
+            throw AgentError(message: "Add your API key in Settings.")
         }
         var text = prompt
         if let previous { text = "Earlier in this session:\n\(previous)\n\n" + text }
@@ -66,7 +69,7 @@ final class AnthropicAgent: Agent {
         var reply = ""
         events(.activity("Thinking"))
         for _ in 0..<12 {
-            var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+            var request = URLRequest(url: URL(string: base + "/messages")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 300
             request.setValue("application/json", forHTTPHeaderField: "content-type")

@@ -54,6 +54,16 @@ enum Prefs {
         set { store.set(newValue, forKey: "agent") }
     }
 
+    static var endpoint: String {
+        get {
+            var url = (store.string(forKey: "endpoint") ?? ProcessInfo.processInfo.environment["QUILL_API_URL"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            while url.hasSuffix("/") { url.removeLast() }
+            if let parsed = URL(string: url), parsed.host != nil, parsed.path.isEmpty { url += "/v1" }
+            return url
+        }
+        set { store.set(newValue, forKey: "endpoint") }
+    }
+
     static func model(_ agent: String) -> String? { store.string(forKey: "model." + agent) }
     static func setModel(_ value: String, for agent: String) { store.set(value, forKey: "model." + agent) }
 

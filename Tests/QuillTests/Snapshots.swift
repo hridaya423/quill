@@ -169,6 +169,14 @@ struct Snapshots {
                 try? await Task.sleep(for: .milliseconds(300))
                 Self.render(settings, "settings-\(pane.rawValue)", dark: dark)
             }
+            ws.agentID = "api"
+            let api = NSHostingView(rootView: PaneView(pane: .cowriters, ws: ws, chrome: editor.chrome))
+            api.frame = NSRect(origin: .zero, size: api.fittingSize)
+            let aw = Self.window(api.fittingSize, dark: dark)
+            aw.contentView = api
+            try? await Task.sleep(for: .milliseconds(300))
+            Self.render(api, "settings-api", dark: dark)
+            ws.agentID = "claude"
         }
     }
 

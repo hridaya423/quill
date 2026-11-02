@@ -61,7 +61,6 @@ final class Workspace {
     var model: ModelChoice?
     var models: [ModelChoice] = []
     @ObservationIgnored var showSettings: (Pane?) -> Void = { _ in }
-    var keyed = Set(AgentSpec.all.filter { Keychain.key(for: $0.id) != nil }.map(\.id))
     var mode: Mode {
         didSet { Prefs.mode = mode }
     }
@@ -119,8 +118,7 @@ final class Workspace {
 
     func available(_ spec: AgentSpec) -> Bool? {
         switch spec.kind {
-        case .anthropic: return keyed.contains(spec.id)
-        case .chat: return spec.keys.isEmpty || keyed.contains(spec.id)
+        case .api: return !Prefs.endpoint.isEmpty
         case .registry(_, _, false): return true
         default:
             let found = spec.binaries.map { installed[$0] }
@@ -151,6 +149,11 @@ final class Workspace {
     func replace(_ agent: Agent) {
         self.agent.shutdown()
         self.agent = agent
+    }
+
+    func reconnect() {
+        guard spec.api else { return }
+        swapAgent()
     }
 
     private func swapAgent() {

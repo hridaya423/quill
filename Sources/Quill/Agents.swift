@@ -37,8 +37,7 @@ struct AgentSpec: Identifiable, Hashable {
         case acp([String])
         case registry(String, local: [String]?, npx: Bool)
         case codex([String])
-        case anthropic
-        case chat(String, effort: Bool)
+        case api
     }
     var id: String
     var name: String
@@ -48,7 +47,6 @@ struct AgentSpec: Identifiable, Hashable {
     var mark: String
     var install: String?
     var picks: [String] = []
-    var keys: [String] = []
 
     static let all: [AgentSpec] = [
         AgentSpec(id: "claude", name: "Claude Code", detail: "Claude plan", kind: .acp(["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.99.1"]),
@@ -71,24 +69,7 @@ struct AgentSpec: Identifiable, Hashable {
                   mark: "pi", install: "npm install -g @mariozechner/pi-coding-agent"),
         AgentSpec(id: "fx", name: "fx", detail: "fx account", kind: .acp(["fx", "acp"]),
                   mark: "fx", install: "Install fx, then sign in with fx login."),
-        AgentSpec(id: "anthropic", name: "Anthropic API", detail: "API key", kind: .anthropic,
-                  defaultModel: "claude-opus-5-5", mark: "claude", picks: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"], keys: ["ANTHROPIC_API_KEY"]),
-        AgentSpec(id: "openai", name: "OpenAI API", detail: "API key", kind: .chat("https://api.openai.com/v1", effort: true),
-                  defaultModel: "gpt-5.2", mark: "codex", keys: ["OPENAI_API_KEY"]),
-        AgentSpec(id: "gemini-api", name: "Gemini API", detail: "API key", kind: .chat("https://generativelanguage.googleapis.com/v1beta/openai", effort: false),
-                  mark: "gemini", keys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"]),
-        AgentSpec(id: "xai", name: "xAI API", detail: "API key", kind: .chat("https://api.x.ai/v1", effort: false),
-                  mark: "grok", keys: ["XAI_API_KEY"]),
-        AgentSpec(id: "openrouter", name: "OpenRouter", detail: "API key", kind: .chat("https://openrouter.ai/api/v1", effort: false),
-                  mark: "openrouter", keys: ["OPENROUTER_API_KEY"]),
-        AgentSpec(id: "groq", name: "Groq", detail: "API key", kind: .chat("https://api.groq.com/openai/v1", effort: false),
-                  defaultModel: "openai/gpt-oss-120b", mark: "groq", keys: ["GROQ_API_KEY"]),
-        AgentSpec(id: "mistral", name: "Mistral", detail: "API key", kind: .chat("https://api.mistral.ai/v1", effort: false),
-                  defaultModel: "mistral-large-latest", mark: "mistral", keys: ["MISTRAL_API_KEY"]),
-        AgentSpec(id: "deepseek", name: "DeepSeek", detail: "API key", kind: .chat("https://api.deepseek.com/v1", effort: false),
-                  defaultModel: "deepseek-chat", mark: "deepseek", keys: ["DEEPSEEK_API_KEY"]),
-        AgentSpec(id: "ollama", name: "Ollama", detail: "On this Mac", kind: .chat("http://localhost:11434/v1", effort: false),
-                  mark: "ollama", install: "Install Ollama from ollama.com, then pull a model."),
+        AgentSpec(id: "api", name: "Your API", detail: "Key and URL", kind: .api, mark: "api"),
     ]
 
     static func named(_ id: String) -> AgentSpec { all.first { $0.id == id } ?? all[0] }
@@ -97,21 +78,15 @@ struct AgentSpec: Identifiable, Hashable {
         switch kind {
         case .acp(let argv), .codex(let argv): [argv[0]]
         case .registry(_, let local, let npx): npx ? (local.map { [$0[0]] } ?? []) + ["npx"] : []
-        case .anthropic, .chat: []
+        case .api: []
         }
     }
 
-    var api: Bool {
-        switch kind {
-        case .anthropic, .chat: true
-        default: false
-        }
-    }
+    var api: Bool { kind == .api }
 
     var missing: String {
         switch kind {
-        case .anthropic: "Needs a key"
-        case .chat: keys.isEmpty ? "Not running" : "Needs a key"
+        case .api: "Needs a URL"
         case .registry(_, _, true): "Needs Node"
         case .acp(let argv) where argv[0] == "npx": "Needs Node"
         default: "Not installed"
@@ -120,8 +95,7 @@ struct AgentSpec: Identifiable, Hashable {
 
     var need: String {
         switch kind {
-        case .anthropic: "an API key"
-        case .chat: keys.isEmpty ? "Ollama running" : "an API key"
+        case .api: "a URL"
         case .registry(_, _, true): "Node"
         case .acp(let argv) where argv[0] == "npx": "Node"
         case .acp(let argv), .codex(let argv): "the \(argv[0]) command"
@@ -135,8 +109,12 @@ struct AgentSpec: Identifiable, Hashable {
         case .acp(let argv): ACPAgent(launch: { argv }, preferred: preferred)
         case .registry(let agent, let local, _): ACPAgent(launch: { try await Registry.argv(agent, local: local) }, preferred: preferred)
         case .codex(let argv): CodexAgent(argv: argv, preferred: preferred)
-        case .anthropic: AnthropicAgent(model: preferred ?? "claude-opus-5-5")
-        case .chat(let base, let effort): ChatAgent(id: id, base: base, effort: effort, preferred: preferred)
+        case .api:
+            if let host = URL(string: Prefs.endpoint)?.host, host.hasSuffix("anthropic.com") {
+                AnthropicAgent(base: Prefs.endpoint, model: preferred ?? "claude-opus-5-5")
+            } else {
+                ChatAgent(id: id, base: Prefs.endpoint, effort: URL(string: Prefs.endpoint)?.host == "api.openai.com", preferred: preferred)
+            }
         }
     }
 }
@@ -658,9 +636,7 @@ enum Keychain {
         }
     }
 
-    static func key(for id: String) -> String? {
-        if let saved = read(id), !saved.isEmpty { return saved }
-        let env = ProcessInfo.processInfo.environment
-        return AgentSpec.all.first { $0.id == id }?.keys.lazy.compactMap { env[$0] }.first { !$0.isEmpty }
+    static var apiKey: String? {
+        read("api").flatMap { $0.isEmpty ? nil : $0 } ?? ProcessInfo.processInfo.environment["QUILL_API_KEY"]
     }
 }

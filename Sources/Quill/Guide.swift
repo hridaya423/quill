@@ -2,11 +2,13 @@ import Foundation
 import QuillCore
 
 enum Guide {
-    static var skill: URL? {
+    static var installed: URL? {
         let home = URL(fileURLWithPath: NSHomeDirectory())
         return [".agents/skills/prose", ".claude/skills/prose"].map { home.appending(path: $0) }
             .first { FileManager.default.fileExists(atPath: $0.appending(path: "SKILL.md").path) }
     }
+
+    static var skill: URL? { installed ?? Brand.url("Prose") }
 
     static func briefing() -> String {
         guard let skill, let text = try? String(contentsOf: skill.appending(path: "SKILL.md"), encoding: .utf8) else { return editorialGuide }

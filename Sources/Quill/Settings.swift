@@ -235,39 +235,67 @@ struct NotesSample: View {
 
 struct CowritersPane: View {
     @Bindable var ws: Workspace
-    @State private var key = ""
+    @State private var key = Keychain.read("api") ?? ""
+    @State private var endpoint = Prefs.endpoint
+    @State private var pending: Task<Void, Never>?
 
-    private func saveKey() {
-        let id = ws.agentID
-        guard !ws.spec.keys.isEmpty else { return }
-        let clean = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard clean != (Keychain.read(id) ?? "") else { return }
-        Keychain.write(id, clean)
-        if Keychain.key(for: id) != nil { ws.keyed.insert(id) } else { ws.keyed.remove(id) }
+    private func save() {
+        pending?.cancel()
+        let url = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard url != Prefs.endpoint || secret != (Keychain.read("api") ?? "") else { return }
+        Prefs.endpoint = url
+        Keychain.write("api", secret)
+        ws.reconnect()
     }
 
-    private func grid(_ specs: [AgentSpec]) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-            ForEach(specs) { spec in
-                Tile(spec: spec, on: ws.agentID == spec.id, available: ws.available(spec)) { ws.agentID = spec.id }
-            }
+    private func later() {
+        pending?.cancel()
+        pending = Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !Task.isCancelled else { return }
+            save()
         }
     }
 
     var body: some View {
-        Block(title: "Agents", note: "Quill signs in through the tool you pick, so your existing plan works.") {
-            grid(AgentSpec.all.filter { !$0.api })
-        }
-        Block(title: "API keys", note: "Pay per use with your own key. Keys stay in your Keychain.") {
-            grid(AgentSpec.all.filter(\.api))
+        Block(title: "Co-writer", note: "Quill signs in through the tool you pick, so your existing plan works. Or bring any API.") {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(AgentSpec.all) { spec in
+                    Tile(spec: spec, on: ws.agentID == spec.id, available: ws.available(spec)) { ws.agentID = spec.id }
+                }
+            }
         }
         Block(title: ws.spec.name, note: hint) {
             Card {
+                if ws.spec.api {
+                    Row {
+                        Text("URL").font(.system(size: 13)).foregroundStyle(Color.ink)
+                    } trailing: {
+                        TextField("", text: $endpoint, prompt: Text(verbatim: "https://api.openai.com/v1"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 300)
+                            .onSubmit(save)
+                            .onChange(of: endpoint) { later() }
+                    }
+                    Hairline()
+                    Row {
+                        Text("Key").font(.system(size: 13)).foregroundStyle(Color.ink)
+                    } trailing: {
+                        SecureField("", text: $key, prompt: Text("Leave empty for a local server"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 300)
+                            .onSubmit(save)
+                            .onChange(of: key) { later() }
+                    }
+                    Hairline()
+                }
                 Row {
                     Text("Model").font(.system(size: 13)).foregroundStyle(Color.ink)
                 } trailing: {
                     if ws.models.isEmpty {
-                        Text(ws.busy ? "Connecting…" : "Loads when \(ws.spec.name) connects").font(.system(size: 12.5)).foregroundStyle(Color.soft)
+                        Text(ws.busy ? "Connecting…" : ws.spec.api ? "Loads from the URL" : "Loads when \(ws.spec.name) connects")
+                            .font(.system(size: 12.5)).foregroundStyle(Color.soft)
                     } else {
                         Picker("", selection: Binding(get: { ws.model?.id ?? "" }, set: { ws.choose(model: $0) })) {
                             ForEach(ws.models) { m in Text(m.name).tag(m.id) }
@@ -276,35 +304,14 @@ struct CowritersPane: View {
                         .fixedSize()
                     }
                 }
-                if !ws.spec.keys.isEmpty {
-                    Hairline()
-                    Row {
-                        Text("API key").font(.system(size: 13)).foregroundStyle(Color.ink)
-                    } trailing: {
-                        SecureField("", text: $key, prompt: Text(ws.keyed.contains(ws.agentID) && key.isEmpty ? "From \(ws.spec.keys[0])" : "Paste your key"))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 240)
-                            .onSubmit(saveKey)
-                            .onChange(of: key) {
-                                Task {
-                                    try? await Task.sleep(for: .milliseconds(600))
-                                    saveKey()
-                                }
-                            }
-                    }
-                }
             }
         }
-        .onAppear {
-            key = Keychain.read(ws.agentID) ?? ""
-            ws.checkAgents()
-        }
-        .onChange(of: ws.agentID) { key = Keychain.read(ws.agentID) ?? "" }
-        .onDisappear(perform: saveKey)
+        .onAppear { ws.checkAgents() }
+        .onDisappear(perform: save)
     }
 
     private var hint: String? {
-        if !ws.spec.keys.isEmpty { return "Your key is stored in the Keychain and sent only to \(ws.spec.name)." }
+        if ws.spec.api { return "Any OpenAI-compatible URL, such as OpenAI, OpenRouter, Gemini, or a local Ollama. An Anthropic URL uses Anthropic's own API. The key stays in your Keychain." }
         guard let install = ws.spec.install else { return nil }
         return ws.available(ws.spec) == false || install.hasPrefix("Downloads") ? install : nil
     }
@@ -425,7 +432,7 @@ struct VoicePane: View {
                 Row {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Writing guide").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.ink)
-                        Text(Guide.skill.map { "Quill's guide plus your prose skill, \($0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))" } ?? "Quill's editorial guide")
+                        Text(Guide.installed.map { "The prose skill, from \($0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))" } ?? "The prose skill, built into Quill")
                             .font(.system(size: 11.5)).foregroundStyle(Color.soft).lineLimit(1).truncationMode(.middle)
                     }
                 } trailing: {
@@ -528,11 +535,13 @@ struct Mark: View {
         let key = "\(spec.mark)\(dark)@\(size)"
         if let hit = cache[key] { return hit }
         let names = (dark ? ["mark-\(spec.mark)-dark.svg"] : []) + ["mark-\(spec.mark).svg", "mark-\(spec.mark).png"]
-        guard let url = names.lazy.compactMap(Brand.url).first, let image = NSImage(contentsOf: url) else { return nil }
+        guard let image = names.lazy.compactMap(Brand.url).first.flatMap(NSImage.init(contentsOf:))
+                ?? NSImage(systemSymbolName: "key.horizontal", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: size, weight: .medium))
+        else { return nil }
         let natural = image.size
         let side = max(natural.width, natural.height, 1)
         image.size = NSSize(width: size * natural.width / side, height: size * natural.height / side)
-        image.isTemplate = ["codex", "gemini", "devin", "openrouter", "groq", "ollama"].contains(spec.mark)
+        image.isTemplate = ["codex", "gemini", "devin", "api"].contains(spec.mark)
         cache[key] = image
         return image
     }

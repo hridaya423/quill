@@ -4,8 +4,8 @@
 - [x] Co-writers can read anywhere in the home folder except hidden folders and ~/Library (`browsable`, `permits`). Writes stay limited to the note's working copy. The prompt names the home folder, says to open what the writer names before writing, and forbids inventing file contents.
   - Reproduced first: Claude Code replied "file access outside this note was refused" and left the note empty.
   - After the fix, `QUILL_REACH=claude,codex scripts/test.sh --filter Reach` drafts a LiveFrame pitch from ~/Honey/edvideo. Every specific claim traces to its README.
-- [x] API providers: Anthropic, OpenAI, Gemini API, xAI, OpenRouter, Groq, Mistral, DeepSeek, Ollama. One OpenAI-compatible `ChatAgent` (Chat.swift) serves all but Anthropic. Both API agents loop over `read_file` and `list_folder` through a shared `Toolbox` (Reading.swift). An empty find appends, so an API agent can draft into an empty note.
-  - Not run live: the Anthropic agent's tool loop, because the stored Anthropic keys return 401. OpenAI's key has no credits.
+- [x] API: one "Your API" co-writer with a URL and a key (Keychain). Any OpenAI-compatible URL goes through `ChatAgent`; an anthropic.com URL uses `AnthropicAgent`. URLs normalize (`/v1` added when the path is empty). Both API agents read through `list_folder` and `read_file` (Reading.swift). An empty find appends, so an API agent can draft into an empty note. Not run live after the change: no funded OpenAI or valid Anthropic key on this Mac.
+- [x] Prose skill bundled at `Brand/Prose` (SKILL.md and references). Quill prefers an installed copy at ~/.agents/skills/prose, else the bundled one. Test: `theProseGuideShipsInsideQuill`.
 - [x] Writing guide: when ~/.agents/skills/prose/SKILL.md (or ~/.claude/skills/prose) exists, the briefing is Quill's guide plus the full prose skill, and its references folder is readable. Shown in Settings → Voice.
 - Gemini CLI is not signed in on this Mac ("Gemini API key is missing").
 

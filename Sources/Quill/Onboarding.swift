@@ -635,7 +635,7 @@ struct Onboarding: View {
             title("Choose your co-writer.", "Quill uses the sign-in of the tool you choose, so your current subscription works.")
             VStack(spacing: 0) {
                 rule()
-                ForEach(AgentSpec.all.filter { !$0.api || ws.keyed.contains($0.id) }) { spec in
+                ForEach(AgentSpec.all.filter { !$0.api || ws.available($0) == true }) { spec in
                     let ready = ws.available(spec)
                     let on = ws.agentID == spec.id
                     row(on: on, enabled: ready != false, mark: {

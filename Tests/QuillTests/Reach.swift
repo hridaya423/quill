@@ -61,3 +61,23 @@ struct Reach {
     let offered = ChatAgent.chatModels(["gpt-5.2", "gpt-5.2-2025-12-11", "gpt-4o-mini-tts", "text-embedding-3-large", "whisper-1", "gpt-5.1-codex", "o3-pro", "gpt-5-mini", "mistral-large-2411", "openai/gpt-oss-120b"])
     #expect(offered == ["openai/gpt-oss-120b", "gpt-5.2", "gpt-5-mini"])
 }
+
+@Test func pastedAPIURLsNormalize() {
+    let before = Prefs.store.string(forKey: "endpoint")
+    defer { Prefs.store.set(before, forKey: "endpoint") }
+    Prefs.endpoint = "https://api.openai.com/"
+    #expect(Prefs.endpoint == "https://api.openai.com/v1")
+    Prefs.endpoint = " https://openrouter.ai/api/v1/ "
+    #expect(Prefs.endpoint == "https://openrouter.ai/api/v1")
+    Prefs.endpoint = "http://localhost:11434"
+    #expect(Prefs.endpoint == "http://localhost:11434/v1")
+    Prefs.endpoint = "https://api.anthropic.com"
+    #expect(Prefs.endpoint == "https://api.anthropic.com/v1")
+}
+
+@Test func theProseGuideShipsInsideQuill() throws {
+    let bundled = try #require(Brand.url("Prose"))
+    #expect(FileManager.default.fileExists(atPath: bundled.appending(path: "SKILL.md").path))
+    #expect(FileManager.default.fileExists(atPath: bundled.appending(path: "references/tell-catalog.md").path))
+    #expect(Guide.briefing().contains("# Prose"))
+}
