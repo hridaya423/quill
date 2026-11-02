@@ -13,6 +13,7 @@ final class Chrome {
     var marked = 0
     var headings: [Heading] = []
     var section: Int?
+    var outlining = false
     var coach: String?
     var history: [String] = Prefs.history
     var recall: Int?
@@ -552,16 +553,19 @@ final class EditorController: NSViewController {
         let status = NSHostingView(rootView: Status(ws: ws, chrome: chrome))
         status.translatesAutoresizingMaskIntoConstraints = false
         status.sizingOptions = [.intrinsicContentSize]
+        status.safeAreaRegions = []
         root.addSubview(status)
 
         let rail = NSHostingView(rootView: Rail(chrome: chrome) { [weak self] h in self?.jump(to: h) })
         rail.translatesAutoresizingMaskIntoConstraints = false
         rail.sizingOptions = [.intrinsicContentSize]
+        rail.safeAreaRegions = []
         root.addSubview(rail)
 
         let pill = NSHostingView(rootView: Pill(ws: ws, chrome: chrome))
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.sizingOptions = [.intrinsicContentSize]
+        pill.safeAreaRegions = []
         root.addSubview(pill)
 
         NSLayoutConstraint.activate([
@@ -1161,15 +1165,10 @@ struct Status: View {
 }
 
 struct Rail: View {
-    var chrome: Chrome
+    static let rows = 14
+    @Bindable var chrome: Chrome
     var jump: (Heading) -> Void
-    @State private var hovering: Bool
-
-    init(chrome: Chrome, open: Bool = false, jump: @escaping (Heading) -> Void) {
-        self.chrome = chrome
-        self.jump = jump
-        _hovering = State(initialValue: open)
-    }
+    private var hovering: Bool { chrome.outlining }
 
     private var shown: [Heading] {
         let all = chrome.headings.filter { $0.level <= 3 }
@@ -1179,6 +1178,12 @@ struct Rail: View {
     private var current: Int? {
         guard let section = chrome.section else { return nil }
         return shown.last { $0.location <= section }?.location
+    }
+
+    private var listed: ArraySlice<Heading> {
+        let at = shown.firstIndex { $0.location == current } ?? 0
+        let start = max(0, min(at - Self.rows / 2, shown.count - Self.rows))
+        return shown[start..<min(shown.count, start + Self.rows)]
     }
 
     var body: some View {
@@ -1201,28 +1206,24 @@ struct Rail: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Outline, \(shown.count) sections")
                 if hovering {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(shown) { h in
-                                Button { jump(h) } label: {
-                                    Text(h.title)
-                                        .font(.serif(h.level == 1 ? 15.5 : 14.5, h.level == 1 ? .medium : .regular))
-                                        .foregroundStyle(h.location == current ? Color.accentInk : h.level > 2 ? Color.soft : Color.ink)
-                                        .lineLimit(1)
-                                        .padding(.leading, CGFloat(min(h.level, 3) - 1) * 12)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.vertical, 5)
-                                        .padding(.horizontal, 12)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(Press())
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(listed) { h in
+                            Button { jump(h) } label: {
+                                Text(h.title)
+                                    .font(.serif(h.level == 1 ? 15.5 : 14.5, h.level == 1 ? .medium : .regular))
+                                    .foregroundStyle(h.location == current ? Color.accentInk : h.level > 2 ? Color.soft : Color.ink)
+                                    .lineLimit(1)
+                                    .padding(.leading, CGFloat(min(h.level, 3) - 1) * 12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 5)
+                                    .padding(.horizontal, 12)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(Press())
                         }
-                        .padding(.vertical, 6)
                     }
+                    .padding(.vertical, 6)
                     .frame(width: 240)
-                    .frame(maxHeight: 420)
-                    .fixedSize(horizontal: false, vertical: true)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.sheet))
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.rule, lineWidth: 1))
                     .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
@@ -1230,7 +1231,7 @@ struct Rail: View {
                 }
             }
             .onHover { on in
-                withAnimation(.easeOut(duration: on ? 0.16 : 0.12)) { hovering = on }
+                withAnimation(.easeOut(duration: on ? 0.16 : 0.12)) { chrome.outlining = on }
             }
         }
     }

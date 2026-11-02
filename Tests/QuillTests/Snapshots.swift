@@ -103,12 +103,14 @@ struct Snapshots {
                 await shot("type")
                 editor.text.scrollToEndOfDocument(nil)
                 await shot("type-end")
-                let outline = NSHostingView(rootView: Rail(chrome: editor.chrome, open: true) { _ in }.padding(30).background(Color(nsColor: Theme.paper)))
+                editor.chrome.outlining = true
+                let outline = NSHostingView(rootView: Rail(chrome: editor.chrome) { _ in }.padding(30).background(Color(nsColor: Theme.paper)))
                 outline.frame = NSRect(origin: .zero, size: outline.fittingSize)
                 let ow = Self.window(outline.fittingSize, dark: dark)
                 ow.contentView = outline
                 try? await Task.sleep(for: .milliseconds(300))
                 Self.render(outline, "rail-open", dark: dark)
+                editor.chrome.outlining = false
                 ws.open(ws.notes.first(where: { $0.title == "pitch" })!.url)
             }
             editor.chrome.hinting = true
