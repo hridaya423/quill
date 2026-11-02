@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 public enum Mode: String, CaseIterable, Sendable {
     case guided
@@ -85,12 +86,26 @@ public struct MarginNote: Equatable, Sendable, Identifiable {
 
 public func readable(_ reply: String) -> String {
     var s = reply.replacingOccurrences(of: #"<(notes?|selection|document|voice)\b[^>]*>[\s\S]*?</\1>"#, with: "", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"<(notes?|selection|document|voice)\b[\s\S]*$"#, with: "", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"\[\s*\{\s*"(quote|lens|note)"[\s\S]*$"#, with: "", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"<[^>]*$"#, with: "", options: .regularExpression)
     s = s.replacingOccurrences(of: #"</?[A-Za-z][\w-]*(\s[^>]*)?/?>"#, with: "", options: .regularExpression)
     s = s.replacingOccurrences(of: #"(?m)^\s*[-*]\s+"#, with: "• ", options: .regularExpression)
     s = s.replacingOccurrences(of: #"(?m)^#{1,6}\s+"#, with: "", options: .regularExpression)
     s = s.replacingOccurrences(of: #"(?m)^[ \t]+|[ \t]+$"#, with: "", options: .regularExpression)
     s = s.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
     return s.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+public func crisp(_ reply: String, sentences limit: Int) -> String {
+    let tokenizer = NLTokenizer(unit: .sentence)
+    tokenizer.string = reply
+    var kept: [String] = []
+    tokenizer.enumerateTokens(in: reply.startIndex..<reply.endIndex) { range, _ in
+        kept.append(reply[range].trimmingCharacters(in: .whitespacesAndNewlines))
+        return kept.count < limit
+    }
+    return kept.filter { !$0.isEmpty }.joined(separator: " ")
 }
 
 public func notes(from reply: String, in text: String) -> [MarginNote]? {

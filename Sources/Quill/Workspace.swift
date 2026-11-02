@@ -629,8 +629,8 @@ final class Workspace {
             return
         }
         let raw = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-        let said = readable(raw)
         let pending = editor?.review.turn(id).count ?? 0
+        let said = crisp(readable(raw), sentences: pending > 0 ? 1 : 3)
         if mode == .notes || raw.contains("<notes>") || tagged != nil, let editor,
            let found = QuillCore.notes(from: tagged.map { "<notes>\($0)</notes>" } ?? raw, in: editor.string), !found.isEmpty {
             margin = found

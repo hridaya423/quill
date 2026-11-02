@@ -49,3 +49,22 @@ let pitch = "# Lumen\n\nWe are basically trying to build a tool.\n\nWriters lose
     #expect(mentionToken("from @Honey/edvideo/ and more") == nil)
     #expect(mentionToken("no mention") == nil)
 }
+
+@Test func streamingNotesNeverShowAsText() {
+    #expect(readable(#"<notes>[{"quote": "You already know your writing"#) == "")
+    #expect(readable(#"Here goes. <notes>[{"quote": "a", "note": "b"}"#) == "Here goes.")
+    #expect(readable(#"[{"quote": "You already know", "lens": "Cut", "note": "Cut it."}]"#) == "")
+    #expect(readable("<quote>You already know</quote> reads flat.") == "You already know reads flat.")
+    #expect(readable("Done. <not") == "Done.")
+}
+
+@Test func repliesStayCrisp() {
+    let edit = """
+    I rewrote the pitch sentence in "Try it" as "We build a tool that helps people write better." I cut the hedges "basically", "trying to", "kind of", "maybe" and "in a way."
+
+    I read your request as the exercise that section sets up. If you meant the note's first sentence, say so.
+    """
+    #expect(crisp(edit, sentences: 1) == #"I rewrote the pitch sentence in "Try it" as "We build a tool that helps people write better.""#)
+    #expect(crisp("Strong opening. The middle drags. Cut the second list. End on the image. Done.", sentences: 3) == "Strong opening. The middle drags. Cut the second list.")
+    #expect(crisp("Short.", sentences: 3) == "Short.")
+}
