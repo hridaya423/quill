@@ -143,9 +143,18 @@ Research: Obsidian, writer.computer (Tauri + React + CM6 + ProseMark, GPL-3.0, s
 Layout: `web/` holds the TypeScript editor; `node web/build.mjs` bundles it into `Sources/Quill/Brand/Editor/` (committed, so SwiftPM needs no Node). `Page` (WKWebView) keeps a synchronous NSString mirror of the text and selection. JS posts `change` and `select`; Swift calls `quill.load/apply/select`.
 
 Phases:
-1. Spike: done. PageTests prove mirror sync, render snapshots (serif and sans), and typing p50 about 1 ms.
-2. Polish the page: no fold gutter, wikilinks, blank-line rhythm, code padding, task boxes, quote bar, caret. Compare against writer.computer.
-3. Swap Page into EditorController in place of QuillTextView: open and save, word count, outline and rail (positions from JS), [[ completion, links, undo.
-4. Agent features in JS: review hunks as decorations with keep and revert, Choreographer (strike, lift, type-in) as CSS animation, margin notes, presence (focused paragraph), held tells.
-5. Overlays: cards that track text move into the page or follow JS-posted rects.
-6. Delete QuillTextView, Markup styling, Choreographer layers. Update FrameTests, PreviewTests, TypingBenchmark, and Snapshots.
+1. Spike: done (8408775).
+2. Page polish: done (e708c65). The user chose system sans as the default face; serif stays available through `data-face`.
+3–6. Port: done (02258dc).
+   - Page replaces QuillTextView. Editor.swift and Choreographer.swift are deleted; Theme moved to Theme.swift.
+   - Review hunks, the focused-hunk card, margin notes and their cards, presence, and sweep render in the page (`web/src/review.ts`, `notes.ts`, `stage.ts`).
+   - Agent edits strike, lift, then type in, and land on any key or click.
+   - CodeMirror history owns undo. `step` effects carry tokens, and `invertedEffects` hands them back on undo and redo, so Swift restores Review snapshots. One undo takes back a whole agent turn (`group`).
+   - Swift edits carry the mirror version, and JS maps them through changes Swift has not seen yet. A load generation drops stale messages.
+   - Evidence: `scripts/test.sh` passes 31 app tests (PageTests, FormatTests, LoopTests end to end, RailTests) and 57 core tests. Snapshots of review, notes, presence, and typography were inspected in light and dark.
+   - Test-only constraint: an off-screen window is occluded, so WebKit pauses animation frames and transitions. Tests settle the page with `still(page)` (no transitions, then `view.measure()`) before snapshots.
+
+Remaining:
+- Live check in the real app: an agent turn animating, keep/revert from the card, undo, notes Apply/Dismiss, [[ completion, zoom.
+- The selected sidebar row renders black in snapshots. The sidebar code is unchanged, so this is probably the test process's accent color. Confirm in the app.
+- Removed with the old editor: TypingBenchmark, FrameTests, scripts/frames.sh (CALayer frame timing). PageTests now covers typing cost.
