@@ -21,7 +21,7 @@ struct Reach {
             let request = Request(words: "go into Honey/edvideo and draft a demo video pitch", title: "Pitch", path: file.path, text: base, selection: nil, mode: .guided)
             var reply = ""
             var steps: [String] = []
-            try await agent.send(prompt(request, canEditFiles: agent.canEditFiles, briefing: ProcessInfo.processInfo.environment["QUILL_GUIDE"] == "quill" ? editorialGuide : Guide.briefing()), file: file, base: base) { e in
+            try await agent.send(prompt(request, canEditFiles: agent.canEditFiles, briefing: Guide.briefing()), file: file, base: base) { e in
                 switch e {
                 case .text(let t): reply += t
                 case .activity(let a): if steps.last != a { steps.append(a) }

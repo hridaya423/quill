@@ -5,10 +5,8 @@
   - Reproduced first: Claude Code replied "file access outside this note was refused" and left the note empty.
   - After the fix, `QUILL_REACH=claude,codex scripts/test.sh --filter Reach` drafts a LiveFrame pitch from ~/Honey/edvideo. Every specific claim traces to its README.
 - [x] API providers: Anthropic, OpenAI, Gemini API, xAI, OpenRouter, Groq, Mistral, DeepSeek, Ollama. One OpenAI-compatible `ChatAgent` (Chat.swift) serves all but Anthropic. Both API agents loop over `read_file` and `list_folder` through a shared `Toolbox` (Reading.swift). An empty find appends, so an API agent can draft into an empty note.
-  - Groq ran the full loop live: list folder, read README, edit.
   - Not run live: the Anthropic agent's tool loop, because the stored Anthropic keys return 401. OpenAI's key has no credits.
 - [x] Writing guide: when ~/.agents/skills/prose/SKILL.md (or ~/.claude/skills/prose) exists, the briefing is Quill's guide plus the full prose skill, and its references folder is readable. Shown in Settings → Voice.
-- Groq's free tier allows 8,000 tokens a minute. The full briefing plus a README goes over that, so the Groq run used `QUILL_GUIDE=quill` (Quill's guide only).
 - Gemini CLI is not signed in on this Mac ("Gemini API key is missing").
 
 ## Feedback round on the live app (2026-11-02, done)
