@@ -30,12 +30,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-if [ ! -f build/Quill.icns ] || [ scripts/icon.swift -nt build/Quill.icns ]; then
-  rm -rf build/Quill.iconset
-  swift scripts/icon.swift build/Quill.iconset Sources/Quill/Brand/EBGaramond.ttf
-  iconutil -c icns build/Quill.iconset -o build/Quill.icns
-fi
-cp build/Quill.icns "$app/Contents/Resources/Quill.icns"
+cp assets/Quill.icns "$app/Contents/Resources/Quill.icns"
 xcrun actool assets/Assets.xcassets --compile "$app/Contents/Resources" --platform macosx \
   --minimum-deployment-target 26.0 --output-partial-info-plist build/assets.plist >/dev/null
 codesign --force --sign - "$app" >/dev/null
