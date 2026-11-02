@@ -2,10 +2,10 @@ import AppKit
 import SwiftUI
 
 enum Brand {
-    static let ink = Color(red: 0.082, green: 0.071, blue: 0.059)
-    static let sheet = Color(red: 0.118, green: 0.102, blue: 0.09)
-    static let paper = Color(red: 0.957, green: 0.918, blue: 0.859)
-    static let ember = Color(red: 1, green: 0.357, blue: 0.212)
+    static let ink = Color(red: 0.106, green: 0.133, blue: 0.208)
+    static let sheet = Color(red: 0.137, green: 0.169, blue: 0.251)
+    static let paper = Color(red: 0.961, green: 0.941, blue: 0.902)
+    static let vermilion = Color(red: 0.878, green: 0.267, blue: 0.169)
     static let soft = paper.opacity(0.62)
     static let faint = paper.opacity(0.36)
     static let rule = paper.opacity(0.1)
@@ -45,87 +45,60 @@ struct QuillMark: View, Animatable {
         set { progress = newValue }
     }
 
-    struct Stroke: Decodable {
-        var nib: Double
-        var angle: Double
-        var dip: Double
-        var bowl: [[Double]]
-        var tail: [[Double]]
+    struct Shape: Decodable {
+        var vane: String
+        var nib: String
+        var from: [Double]
+        var to: [Double]
     }
 
-    struct Line {
-        var points: [CGPoint]
-        var widths: [Double]
-        var lengths: [Double]
-        var total: Double { lengths.last ?? 0 }
-
-        init(_ samples: [[Double]]) {
-            points = samples.map { CGPoint(x: $0[0], y: $0[1]) }
-            widths = samples.map { $0[2] }
-            var run = [0.0]
-            for i in points.indices.dropFirst() {
-                run.append(run[i - 1] + hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y))
-            }
-            lengths = run
-        }
-
-        func ribbon(from start: Double, to end: Double, nib: Double, angle: Double) -> Path {
-            guard end > start else { return Path() }
-            let h = CGVector(dx: cos(angle) / 2, dy: -sin(angle) / 2)
-            var a: [CGPoint] = [], b: [CGPoint] = []
-            func add(_ p: CGPoint, _ w: Double) {
-                a.append(CGPoint(x: p.x + h.dx * nib * w, y: p.y + h.dy * nib * w))
-                b.append(CGPoint(x: p.x - h.dx * nib * w, y: p.y - h.dy * nib * w))
-            }
-            for i in points.indices {
-                if lengths[i] < start { continue }
-                if lengths[i] > end {
-                    if i > 0 {
-                        let f = (end - lengths[i - 1]) / max(lengths[i] - lengths[i - 1], 0.0001)
-                        let p = CGPoint(x: points[i - 1].x + (points[i].x - points[i - 1].x) * f, y: points[i - 1].y + (points[i].y - points[i - 1].y) * f)
-                        add(p, widths[i - 1] + (widths[i] - widths[i - 1]) * f)
-                    }
-                    break
-                }
-                add(points[i], widths[i])
-            }
-            var path = Path()
-            guard let first = a.first else { return path }
-            path.move(to: first)
-            for p in a.dropFirst() { path.addLine(to: p) }
-            for p in b.reversed() { path.addLine(to: p) }
-            path.closeSubpath()
-            return path
-        }
-    }
-
-    static let stroke: Stroke? = Brand.url("mark.json")
+    static let shape: Shape? = Brand.url("mark.json")
         .flatMap { try? Data(contentsOf: $0) }
-        .flatMap { try? JSONDecoder().decode(Stroke.self, from: $0) }
-    static let bowl = stroke.map { Line($0.bowl) }
-    static let tail = stroke.map { Line($0.tail) }
-    static let frame: CGRect = {
-        guard let s = stroke else { return CGRect(x: 0, y: 0, width: 1024, height: 1024) }
-        let all = s.bowl + s.tail
-        let pad = s.nib / 2 + 2
-        let xs = all.map { $0[0] }, ys = all.map { $0[1] }
-        return CGRect(x: xs.min()! - pad, y: ys.min()! - pad, width: xs.max()! - xs.min()! + pad * 2, height: ys.max()! - ys.min()! + pad * 2)
-    }()
+        .flatMap { try? JSONDecoder().decode(Shape.self, from: $0) }
+    static let vane = shape.map { path($0.vane) } ?? Path()
+    static let nib = shape.map { path($0.nib) } ?? Path()
+    static let frame = vane.boundingRect.union(nib.boundingRect)
+
+    static func path(_ d: String) -> Path {
+        var p = Path()
+        var words = d.split(separator: " ").makeIterator()
+        func point() -> CGPoint? {
+            guard let x = words.next().flatMap({ Double($0) }), let y = words.next().flatMap({ Double($0) }) else { return nil }
+            return CGPoint(x: x, y: y)
+        }
+        while let op = words.next() {
+            switch op {
+            case "M": if let a = point() { p.move(to: a) }
+            case "L": if let a = point() { p.addLine(to: a) }
+            case "C": if let a = point(), let b = point(), let c = point() { p.addCurve(to: c, control1: a, control2: b) }
+            case "Z": p.closeSubpath()
+            default: break
+            }
+        }
+        return p
+    }
 
     var body: some View {
         Canvas { ctx, size in
-            guard let s = Self.stroke, let bowl = Self.bowl, let tail = Self.tail else { return }
-            let scale = min(size.width / Self.frame.width, size.height / Self.frame.height)
-            ctx.translateBy(x: (size.width - Self.frame.width * scale) / 2, y: (size.height - Self.frame.height * scale) / 2)
+            guard let s = Self.shape else { return }
+            let f = Self.frame
+            let scale = min(size.width / f.width, size.height / f.height)
+            ctx.translateBy(x: (size.width - f.width * scale) / 2, y: (size.height - f.height * scale) / 2)
             ctx.scaleBy(x: scale, y: scale)
-            ctx.translateBy(x: -Self.frame.minX, y: -Self.frame.minY)
-            let drawn = progress * (bowl.total + tail.total)
-            ctx.fill(bowl.ribbon(from: 0, to: min(drawn, bowl.total), nib: s.nib, angle: s.angle), with: .color(ink))
-            let t = drawn - bowl.total
-            guard t > 0 else { return }
-            let dip = tail.total * s.dip
-            ctx.fill(tail.ribbon(from: 0, to: min(t, dip + 2), nib: s.nib, angle: s.angle), with: .color(ink))
-            ctx.fill(tail.ribbon(from: dip, to: t, nib: s.nib, angle: s.angle), with: .color(Brand.ember))
+            ctx.translateBy(x: -f.minX, y: -f.minY)
+            let a = CGPoint(x: s.from[0], y: s.from[1]), b = CGPoint(x: s.to[0], y: s.to[1])
+            let length = hypot(b.x - a.x, b.y - a.y)
+            let reveal = min(1, progress / 0.82)
+            var drawn = ctx
+            drawn.translateBy(x: a.x, y: a.y)
+            drawn.rotate(by: .radians(atan2(b.y - a.y, b.x - a.x)))
+            drawn.clip(to: Path(CGRect(x: -40, y: -length, width: length * reveal + 40, height: length * 2)))
+            drawn.rotate(by: .radians(-atan2(b.y - a.y, b.x - a.x)))
+            drawn.translateBy(x: -a.x, y: -a.y)
+            drawn.fill(Self.vane, with: .color(ink), style: FillStyle(eoFill: true))
+            drawn.fill(Self.nib, with: .color(ink))
+            let dip = max(0, (progress - 0.82) / 0.18)
+            ctx.fill(Self.nib, with: .color(Brand.vermilion.opacity(progress >= 1 ? 1 : dip)))
         }
         .aspectRatio(Self.frame.width / Self.frame.height, contentMode: .fit)
         .accessibilityElement(children: .ignore)

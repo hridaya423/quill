@@ -975,6 +975,7 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
             .overlay {
                 if shown.isEmpty, !query.isEmpty {
                     Text("No notes match “\(query)”").font(.system(size: 12)).foregroundStyle(Color.soft)
@@ -982,6 +983,7 @@ struct Sidebar: View {
             }
             AgentBadge(ws: ws, settings: settings)
         }
+        .background(Color.sheet)
         .onChange(of: chrome.searching) { _, on in searchFocused = on }
         .onChange(of: open) { Prefs.expanded = Array(open) }
         .onChange(of: ws.current, initial: true) { _, url in

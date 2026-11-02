@@ -238,7 +238,7 @@ struct Film: View {
                             .overlay(alignment: .leading) {
                                 if token.hedge {
                                     Capsule()
-                                        .fill(Brand.ember)
+                                        .fill(Brand.vermilion)
                                         .frame(height: 3)
                                         .scaleEffect(x: beat >= 4 ? 1 : 0, anchor: .leading)
                                         .padding(.horizontal, -4)
@@ -284,7 +284,7 @@ struct Film: View {
     private var pill: some View {
         HStack(spacing: 14) {
             if beat >= 5 {
-                Circle().fill(Brand.ember).frame(width: 6, height: 6)
+                Circle().fill(Brand.vermilion).frame(width: 6, height: 6)
                 Text("Cut the hedges.").font(Brand.serif(19)).foregroundStyle(Brand.paper)
                 Rectangle().fill(Brand.rule).frame(width: 1, height: 16)
                 Text(beat >= 6 ? "Kept" : "Keep")
@@ -295,7 +295,7 @@ struct Film: View {
                     .background(Capsule().fill(beat >= 6 ? Brand.paper.opacity(0.12) : Brand.paper))
                     .contentTransition(.opacity)
             } else {
-                Listening(color: Brand.ember)
+                Listening(color: Brand.vermilion)
                 Text(String(ask.prefix(heard)))
                     .font(Brand.serif(19))
                     .foregroundStyle(Brand.paper)
@@ -463,7 +463,7 @@ struct Onboarding: View {
         ZStack {
             Brand.ink.ignoresSafeArea()
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-            EllipticalGradient(colors: [Brand.ember.opacity(0.16), Brand.ember.opacity(0.04), .clear], center: .init(x: 0.5, y: 1.05), startRadiusFraction: 0, endRadiusFraction: 0.75)
+            EllipticalGradient(colors: [Brand.sheet, Brand.ink], center: .init(x: 0.5, y: 1.1), startRadiusFraction: 0, endRadiusFraction: 0.8)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
             if run.step == .overture {
@@ -493,7 +493,7 @@ struct Onboarding: View {
             let h = min(560, geo.size.height - 80)
             let wide = w >= 840
             ZStack(alignment: .topLeading) {
-                Color(nsColor: Theme.color(0xFBF8F4, 0x211E1B))
+                Color(nsColor: Theme.color(0xF8F4EC, 0x1A2032))
                 if wide {
                     preview
                         .frame(width: 680, height: h - 56)
@@ -522,7 +522,7 @@ struct Onboarding: View {
         return GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.ink.opacity(0.07))
-                Capsule().fill(Brand.ember).frame(width: geo.size.width * at)
+                Capsule().fill(Brand.vermilion).frame(width: geo.size.width * at)
             }
         }
         .frame(height: 3)
