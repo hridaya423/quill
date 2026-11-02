@@ -69,7 +69,7 @@ struct PageTests {
         for face in ["serif", "sans"] {
             for dark in [false, true] {
                 let (page, window) = try await page(dark, face: face)
-                page.select(NSRange(location: (page.text as NSString).range(of: "We build").location, length: 0))
+                page.select(NSRange(location: (page.text as NSString).range(of: "1. first").location, length: 0))
                 try await Task.sleep(for: .milliseconds(200))
                 let image = try await page.takeSnapshot(configuration: nil)
                 let rep = NSBitmapImageRep(data: image.tiffRepresentation!)!

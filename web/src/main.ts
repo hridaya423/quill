@@ -2,7 +2,9 @@ import { EditorState, type ChangeSpec } from '@codemirror/state';
 import { EditorView, drawSelection } from '@codemirror/view';
 import { markdown } from '@codemirror/lang-markdown';
 import { GFM } from '@lezer/markdown';
+import { ornaments } from './ornaments';
 import {
+  clickLinkHandler,
   prosemarkBasicSetup,
   prosemarkBaseThemeSetup,
   prosemarkMarkdownSyntaxExtensions,
@@ -11,7 +13,9 @@ import {
 type Message =
   | { type: 'ready' }
   | { type: 'change'; changes: [number, number, string][]; anchor: number; head: number }
-  | { type: 'select'; anchor: number; head: number };
+  | { type: 'select'; anchor: number; head: number }
+  | { type: 'link'; url: string }
+  | { type: 'note'; title: string };
 
 const native = (window as any).webkit?.messageHandlers?.quill;
 const post = (m: Message) => native?.postMessage(m);
@@ -36,6 +40,8 @@ const extensions = [
   markdown({ extensions: [GFM, prosemarkMarkdownSyntaxExtensions] }),
   prosemarkBasicSetup(),
   prosemarkBaseThemeSetup(),
+  clickLinkHandler.of((url) => post({ type: 'link', url })),
+  ornaments((title) => post({ type: 'note', title })),
   drawSelection(),
   EditorView.lineWrapping,
   EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'on' }),

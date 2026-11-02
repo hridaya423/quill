@@ -114,3 +114,59 @@ html, body {
 }
 
 .cm-editor .cm-activeLine { background: transparent; }
+
+.cm-editor .cm-gutters { display: none; }
+
+.cm-editor .cm-line.cm-blank { line-height: 0.7; }
+
+.cm-editor .cm-fenced-code-line {
+  padding-left: 18px;
+  padding-right: 18px;
+  font-size: 0.78em;
+}
+
+.cm-editor .cm-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: calc(var(--size) * 0.78);
+  height: calc(var(--size) * 0.78);
+  margin: 0 calc(var(--size) * 0.42) 0 1px;
+  vertical-align: calc(var(--size) * -0.1);
+  border: 1.5px solid var(--soft);
+  border-radius: calc(var(--size) * 0.2);
+  background: transparent center / 72% no-repeat;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.cm-editor .cm-checkbox:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.3 5 8.6 9.6 3.6' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.cm-editor .cm-line:has(.cm-checkbox:checked) { color: var(--soft); }
+
+.cm-editor .cm-wikilink,
+.cm-editor .cm-rendered-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+}
+
+.cm-editor .cm-wikilink-source { color: var(--soft); }
+
+.cm-editor .cm-line.cm-blockquote-line,
+.cm-editor .cm-line.cm-blockquote-line > span:not(.cm-rendered-link):not(.cm-wikilink) {
+  color: var(--soft);
+}
+
+.cm-editor .cm-line.cm-blockquote-line::before,
+.cm-editor .cm-nested-blockquote-border {
+  border-left: 2px solid var(--faint);
+  inset-inline-start: 2px;
+  z-index: 0;
+}
