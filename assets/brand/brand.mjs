@@ -80,7 +80,7 @@ const social = () => {
     + mark
     + `<text x="640" y="350" ${type} font-size="42" font-weight="700" fill="${cloud}">Say a change. Your AI types it into your draft.</text>`
     + `<text x="640" y="398" ${type} font-size="24" font-weight="500" fill="${cloud}" fill-opacity=".64">Claude Code, Codex, and Cursor edit in place. You keep or revert each change.</text>`
-    + `<text x="640" y="584" ${type} font-size="21" font-weight="600" fill="${sky}" fill-opacity=".8">Free for macOS 26  ·  github.com/hridaya423/quill</text>`
+    + `<text x="640" y="584" ${type} font-size="21" font-weight="600" fill="${sky}" fill-opacity=".8">Download here: github.com/hridaya423/quill</text>`
     + `</svg>\n`;
 };
 writeFileSync(join(here, '../../.github/assets/social.svg'), social());

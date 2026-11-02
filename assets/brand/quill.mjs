@@ -85,7 +85,7 @@ function dot(c, radius) {
 const moved = (path, scale, dx, dy) => path.replace(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g,
   (_, x, y) => `${f(Number(x) * scale + dx)} ${f(base + (Number(y) - base) * scale + dy)}`);
 
-const capital = 1.14, overshoot = 9, shift = 50;
+const capital = 1.14, overshoot = 9, shift = -25;
 export const aperture = mark();
 export const q = moved(aperture, capital, 0, overshoot);
 export const uill = moved([u(475), bar(1074, xHeight), dot([1074 + stem / 2, -399], 92), bar(1317, ascender), bar(1559, ascender)].join(' '), 1, shift, 0);
