@@ -94,8 +94,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentViewController = split
         window.setContentSize(NSSize(width: 1240, height: 820))
         window.minSize = NSSize(width: 640, height: 420)
+        if !window.setFrameUsingName("Quill"), let area = (window.screen ?? NSScreen.main)?.visibleFrame {
+            window.setFrameOrigin(NSPoint(x: area.midX - window.frame.width / 2, y: area.midY - window.frame.height / 2))
+        }
         window.setFrameAutosaveName("Quill")
-        if window.frame.origin == .zero { window.center() }
         window.backgroundColor = Theme.paper
         let toggle = NSButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!,
                               target: nil, action: #selector(NSSplitViewController.toggleSidebar(_:)))
