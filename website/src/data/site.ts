@@ -1,4 +1,5 @@
-export const github = "https://github.com/hridaya423/quill";
+export const repo = "hridaya423/quill";
+export const github = `https://github.com/${repo}`;
 export const download = `${github}/releases/latest/download/Quill.dmg`;
 export const description =
   "A writing app for Mac. Hold a key, say what to change, and your AI edits right in your draft.";

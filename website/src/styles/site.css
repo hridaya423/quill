@@ -294,20 +294,97 @@ button:active {
 .download-link {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-size: clamp(19px, 2vw, 27px);
-  font-weight: 500;
-  line-height: 1.4;
-  padding-block: 9px;
-  border-bottom: 1px solid currentColor;
+  gap: 11px;
+  height: 60px;
+  padding-inline: 24px 30px;
+  border-radius: 999px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   white-space: nowrap;
+  color: #f8fcff;
+  background: linear-gradient(180deg, #24405d, #10233a);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.16),
+    0 0 0 1px rgb(8 28 52 / 0.5),
+    0 1px 1px rgb(6 24 48 / 0.14),
+    0 4px 8px -2px rgb(6 24 48 / 0.2),
+    0 16px 32px -10px rgb(6 24 48 / 0.36);
   transition:
-    color var(--fast),
-    transform var(--fast) var(--ease-out);
+    transform 160ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
 }
+.download-link:active {
+  transform: scale(0.97);
+  transition-duration: 100ms;
+}
+.download-glyph {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  overflow: visible;
+}
+.download-arrow,
 .download-link span {
   display: inline-block;
-  transition: transform var(--fast) var(--ease-out);
+  transition: transform 160ms var(--ease-out);
+}
+.github {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding-inline: 12px 13px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: rgb(255 255 255 / 0.46);
+  box-shadow:
+    inset 0 0 0 1px rgb(20 33 47 / 0.12),
+    0 1px 2px rgb(20 33 47 / 0.06);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  transition:
+    background-color 150ms ease,
+    transform 160ms var(--ease-out);
+}
+.github:before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+}
+.github:active {
+  transform: scale(0.97);
+  transition-duration: 100ms;
+}
+.github-mark {
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+}
+.github-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-left: 10px;
+  height: 18px;
+  border-left: 1px solid rgb(20 33 47 / 0.16);
+}
+.github-stars[hidden] {
+  display: none;
+}
+.github-star {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  transition: fill 150ms ease, transform 160ms var(--ease-out);
 }
 .skip-intro {
   color: #f3f8ff;
@@ -391,13 +468,6 @@ button:active {
   color: var(--blue);
 }
 
-.replay {
-  position: absolute;
-  left: var(--space);
-  bottom: 16px;
-  z-index: 5;
-  font-size: 13px;
-}
 @media (hover: hover) and (pointer: fine) {
   .skip-intro:hover {
     text-decoration: underline;
@@ -405,16 +475,47 @@ button:active {
   .text-link:hover:after {
     transform: scaleX(1);
   }
+  .download-link:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.16),
+      0 0 0 1px rgb(8 28 52 / 0.5),
+      0 2px 2px rgb(6 24 48 / 0.14),
+      0 8px 14px -4px rgb(6 24 48 / 0.24),
+      0 24px 44px -12px rgb(6 24 48 / 0.42);
+  }
+  .download-link:hover:active {
+    transform: scale(0.97);
+  }
+  .download-link:hover .download-arrow {
+    transform: translateY(1.5px);
+  }
   .download-link:hover span {
     transform: translate(3px, -3px);
+  }
+  .github:hover {
+    background-color: rgb(255 255 255 / 0.7);
+  }
+  .github:hover .github-star {
+    fill: #c98a0b;
+    transform: rotate(-12deg) scale(1.08);
   }
 }
 @media (min-width: 901px) {
   .hero.gl-ready .download-link {
-    color: #f8fcff;
+    color: #0d2742;
+    background: linear-gradient(180deg, #ffffff, #e6f0fa);
+    box-shadow:
+      inset 0 1px 0 #ffffff,
+      inset 0 -1px 0 rgb(57 104 153 / 0.16),
+      0 0 0 1px rgb(4 34 72 / 0.18),
+      0 1px 1px rgb(2 24 58 / 0.12),
+      0 4px 8px -2px rgb(2 24 58 / 0.2),
+      0 16px 32px -10px rgb(2 24 58 / 0.4);
   }
   .hero.gl-ready .download-link:focus-visible {
     outline-color: #f8fcff;
+    outline-offset: 3px;
   }
 }
 @media (min-width: 1600px) {
@@ -443,7 +544,8 @@ button:active {
     font-size: 17px;
   }
   .download-link {
-    font-size: 20px;
+    height: 56px;
+    font-size: 18px;
   }
   .hero-bottom {
     bottom: 11%;
@@ -486,7 +588,12 @@ button:active {
   }
   .hero-bottom .download-link {
     margin-top: 28px;
-    font-size: 19px;
+    height: 54px;
+    font-size: 17px;
+  }
+  .github {
+    height: 36px;
+    font-size: 13px;
   }
   .skip-intro {
     bottom: 16px;
@@ -529,13 +636,23 @@ button:active {
   .gl-ready .hero-mark {
     opacity: 1;
   }
-  .skip-intro,
-  .replay {
+  .skip-intro {
     display: none;
   }
 }
 @media (max-width: 360px) {
   .hero-copy p {
     max-width: 18ch;
+  }
+}
+@media (hover: hover) and (pointer: fine) and (min-width: 901px) {
+  .hero.gl-ready .download-link:hover {
+    box-shadow:
+      inset 0 1px 0 #ffffff,
+      inset 0 -1px 0 rgb(57 104 153 / 0.16),
+      0 0 0 1px rgb(4 34 72 / 0.18),
+      0 2px 2px rgb(2 24 58 / 0.12),
+      0 8px 14px -4px rgb(2 24 58 / 0.26),
+      0 24px 44px -12px rgb(2 24 58 / 0.5);
   }
 }

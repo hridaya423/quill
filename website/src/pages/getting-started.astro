@@ -1,10 +1,11 @@
 ---
 import Base from '../layouts/Base.astro';
 import Brand from '../components/Brand.astro';
+import GitHub from '../components/GitHub.astro';
 import { github, download } from '../data/site';
 ---
 <Base title="Your first words with Quill.">
-  <header class="guide-nav shell"><a href="/" aria-label="Quill home"><Brand class="small-brand" /></a><a class="text-link" href={github}>GitHub ↗</a></header>
+  <header class="guide-nav shell"><a href="/" aria-label="Quill home"><Brand class="small-brand" /></a><GitHub /></header>
   <main id="main" class="guide section-shell"><h1>Your first words<br />with Quill.</h1><p class="guide-lead">From a download to a draft that sounds like you.</p>
     <section><h2>Make a little space.</h2><p><a href={download}>Download Quill for Mac</a>, open the DMG, and drag Quill into Applications. You’ll need macOS 26 or later.</p></section>
     <section><h2>Bring your words.</h2><p>Choose a folder for your notes. If you already use Obsidian, you can choose your vault. Quill reads your notes to create <code>Voice.md</code>, a guide to your writing style.</p></section>

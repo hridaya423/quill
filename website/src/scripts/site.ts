@@ -16,30 +16,22 @@ export function start() {
   const copy = hero.querySelector<HTMLElement>(".hero-copy")!;
   const download = hero.querySelector<HTMLAnchorElement>(".download-link")!;
   const skip = hero.querySelector<HTMLButtonElement>(".skip-intro")!;
-  const replay = hero.querySelector<HTMLButtonElement>(".replay")!;
   const text = [nav, copy, download];
   const trace = hero.querySelector<SVGSVGElement>(".intro-q")!;
   const path = trace.querySelector("path")!;
   const media = gsap.matchMedia();
-  let seenOpening = false;
-  try {
-    seenOpening = sessionStorage.getItem("quill-opening-v3") === "seen";
-  } catch {}
   media.add("(prefers-reduced-motion: no-preference)", () => {
     let surface: ReturnType<typeof daylight> | undefined;
     try {
       surface = daylight(canvas, hero, art);
-      if (!seenOpening) {
-        surface.uniforms.uMorph.value = 0;
-        surface.uniforms.uPlain.value = 1;
-        surface.uniforms.uReveal.value = 0;
-      }
+      surface.uniforms.uMorph.value = 0;
+      surface.uniforms.uPlain.value = 1;
+      surface.uniforms.uReveal.value = 0;
       surface.render(0);
       hero.classList.add("gl-ready");
     } catch {
       surface = undefined;
     }
-    replay.hidden = !surface;
     let visible = !document.hidden;
     let inView = true;
     let pointerX = 0.5;
@@ -79,14 +71,10 @@ export function start() {
     }
     const complete = () => {
       skip.hidden = true;
-      replay.hidden = !surface;
       nav.inert = false;
       bottom.inert = false;
       nav.removeAttribute("aria-hidden");
       bottom.removeAttribute("aria-hidden");
-      try {
-        sessionStorage.setItem("quill-opening-v3", "seen");
-      } catch {}
     };
     const opening = gsap.timeline({ paused: true, onComplete: complete });
     const configureOpening = () => {
@@ -136,26 +124,20 @@ export function start() {
       opening.progress(1).pause();
       complete();
     };
-    const play = () => {
-      if (!surface) return;
-      window.scrollTo({ top: 0, behavior: "instant" });
+    if (surface) {
       skip.hidden = false;
-      replay.hidden = true;
       nav.inert = true;
       bottom.inert = true;
       nav.setAttribute("aria-hidden", "true");
       bottom.setAttribute("aria-hidden", "true");
       opening.restart();
-    };
-    if (!seenOpening && surface) play();
-    else finishOpening();
+    } else finishOpening();
     hero.classList.remove("opening-pending");
     const contextLost = (event: Event) => {
       event.preventDefault();
       finishOpening();
       surface?.dispose();
       surface = undefined;
-      replay.hidden = true;
       skip.hidden = true;
       hero.classList.remove("gl-ready");
     };
@@ -173,7 +155,6 @@ export function start() {
     canvas.addEventListener("webglcontextlost", contextLost);
     canvas.addEventListener("webglcontextrestored", contextRestored);
     skip.addEventListener("click", finishOpening);
-    replay.addEventListener("click", play);
     const wheel = () => {
       if (opening.isActive()) finishOpening();
     };
@@ -200,9 +181,7 @@ export function start() {
       document.removeEventListener("visibilitychange", visibility);
       document.removeEventListener("keydown", keyboard);
       skip.removeEventListener("click", finishOpening);
-      replay.removeEventListener("click", play);
       skip.hidden = true;
-      replay.hidden = true;
     };
   });
   hero.classList.remove("opening-pending");
