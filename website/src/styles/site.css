@@ -294,42 +294,51 @@ button:active {
 .download-link {
   display: inline-flex;
   align-items: center;
-  gap: 11px;
-  height: 60px;
-  padding-inline: 24px 30px;
+  gap: 16px;
+  height: 58px;
+  padding-inline: 26px 7px;
   border-radius: 999px;
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.01em;
   white-space: nowrap;
-  color: #f8fcff;
-  background: linear-gradient(180deg, #24405d, #10233a);
+  color: #f6faff;
+  background: #0c1a2a;
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.16),
-    0 0 0 1px rgb(8 28 52 / 0.5),
-    0 1px 1px rgb(6 24 48 / 0.14),
-    0 4px 8px -2px rgb(6 24 48 / 0.2),
-    0 16px 32px -10px rgb(6 24 48 / 0.36);
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    0 0 0 1px rgb(255 255 255 / 0.06),
+    0 12px 28px -12px rgb(0 10 30 / 0.6);
   transition:
-    transform 160ms var(--ease-out),
-    box-shadow 200ms var(--ease-out);
+    background-color 150ms ease,
+    transform 160ms var(--ease-out);
 }
 .download-link:active {
   transform: scale(0.97);
   transition-duration: 100ms;
 }
-.download-glyph {
-  width: 21px;
-  height: 21px;
+.download-link:focus-visible {
+  outline-offset: 3px;
+}
+.download-chip {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: #0c1a2a;
+  background: #f6faff;
+}
+.download-chip svg {
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-  overflow: visible;
+  transition: transform 160ms var(--ease-out);
 }
-.download-arrow,
-.download-link span {
+.download-link > span:not(.download-chip) {
   display: inline-block;
   transition: transform 160ms var(--ease-out);
 }
@@ -476,21 +485,12 @@ button:active {
     transform: scaleX(1);
   }
   .download-link:hover {
-    transform: translateY(-1px);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.16),
-      0 0 0 1px rgb(8 28 52 / 0.5),
-      0 2px 2px rgb(6 24 48 / 0.14),
-      0 8px 14px -4px rgb(6 24 48 / 0.24),
-      0 24px 44px -12px rgb(6 24 48 / 0.42);
+    background-color: #142840;
   }
-  .download-link:hover:active {
-    transform: scale(0.97);
+  .download-link:hover .download-chip svg {
+    transform: translateY(2px);
   }
-  .download-link:hover .download-arrow {
-    transform: translateY(1.5px);
-  }
-  .download-link:hover span {
+  .download-link:hover > span:not(.download-chip) {
     transform: translate(3px, -3px);
   }
   .github:hover {
@@ -502,20 +502,8 @@ button:active {
   }
 }
 @media (min-width: 901px) {
-  .hero.gl-ready .download-link {
-    color: #0d2742;
-    background: linear-gradient(180deg, #ffffff, #e6f0fa);
-    box-shadow:
-      inset 0 1px 0 #ffffff,
-      inset 0 -1px 0 rgb(57 104 153 / 0.16),
-      0 0 0 1px rgb(4 34 72 / 0.18),
-      0 1px 1px rgb(2 24 58 / 0.12),
-      0 4px 8px -2px rgb(2 24 58 / 0.2),
-      0 16px 32px -10px rgb(2 24 58 / 0.4);
-  }
   .hero.gl-ready .download-link:focus-visible {
     outline-color: #f8fcff;
-    outline-offset: 3px;
   }
 }
 @media (min-width: 1600px) {
@@ -545,7 +533,7 @@ button:active {
   }
   .download-link {
     height: 56px;
-    font-size: 18px;
+    font-size: 17px;
   }
   .hero-bottom {
     bottom: 11%;
@@ -590,6 +578,7 @@ button:active {
     margin-top: 28px;
     height: 54px;
     font-size: 17px;
+    padding-inline: 24px 6px;
   }
   .github {
     height: 36px;
@@ -643,16 +632,5 @@ button:active {
 @media (max-width: 360px) {
   .hero-copy p {
     max-width: 18ch;
-  }
-}
-@media (hover: hover) and (pointer: fine) and (min-width: 901px) {
-  .hero.gl-ready .download-link:hover {
-    box-shadow:
-      inset 0 1px 0 #ffffff,
-      inset 0 -1px 0 rgb(57 104 153 / 0.16),
-      0 0 0 1px rgb(4 34 72 / 0.18),
-      0 2px 2px rgb(2 24 58 / 0.12),
-      0 8px 14px -4px rgb(2 24 58 / 0.26),
-      0 24px 44px -12px rgb(2 24 58 / 0.5);
   }
 }
