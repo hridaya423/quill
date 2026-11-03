@@ -292,25 +292,46 @@ button:active {
   margin-top: 5px;
 }
 .download-link {
+  --glass: rgb(100 160 196 / 0.42);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   height: 58px;
-  padding-inline: 26px 7px;
+  padding-inline: 28px;
   border-radius: 999px;
   font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.01em;
   white-space: nowrap;
-  color: #f6faff;
-  background: #0c1a2a;
+  color: #0d2742;
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.45);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.12),
-    0 0 0 1px rgb(255 255 255 / 0.06),
-    0 12px 28px -12px rgb(0 10 30 / 0.6);
+    inset 1.5px 1.5px 0 rgb(239 251 255 / 0.7),
+    inset -1.5px -1.5px 0 rgb(44 111 161 / 0.6),
+    0 14px 28px -16px rgb(0 25 70 / 0.55);
   transition:
-    background-color 150ms ease,
+    background-color 200ms ease,
     transform 160ms var(--ease-out);
+}
+.download-link:after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(
+    120px circle at var(--x, 50%) var(--y, 0%),
+    rgb(255 255 255 / 0.32),
+    transparent 70%
+  );
+  opacity: 0;
+  transition: opacity 200ms ease;
 }
 .download-link:active {
   transform: scale(0.97);
@@ -319,16 +340,7 @@ button:active {
 .download-link:focus-visible {
   outline-offset: 3px;
 }
-.download-chip {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  color: #0c1a2a;
-  background: #f6faff;
-}
-.download-chip svg {
+.download-arrow {
   width: 16px;
   height: 16px;
   fill: none;
@@ -338,7 +350,7 @@ button:active {
   stroke-linejoin: round;
   transition: transform 160ms var(--ease-out);
 }
-.download-link > span:not(.download-chip) {
+.download-link > span {
   display: inline-block;
   transition: transform 160ms var(--ease-out);
 }
@@ -354,12 +366,13 @@ button:active {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
-  background: rgb(255 255 255 / 0.46);
+  background: rgb(100 160 196 / 0.22);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   box-shadow:
-    inset 0 0 0 1px rgb(20 33 47 / 0.12),
-    0 1px 2px rgb(20 33 47 / 0.06);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
+    inset 1px 1px 0 rgb(239 251 255 / 0.75),
+    inset -1px -1px 0 rgb(44 111 161 / 0.4),
+    0 8px 18px -12px rgb(0 25 70 / 0.4);
   transition:
     background-color 150ms ease,
     transform 160ms var(--ease-out);
@@ -384,7 +397,7 @@ button:active {
   gap: 5px;
   padding-left: 10px;
   height: 18px;
-  border-left: 1px solid rgb(20 33 47 / 0.16);
+  border-left: 1px solid rgb(44 111 161 / 0.3);
 }
 .github-stars[hidden] {
   display: none;
@@ -485,16 +498,19 @@ button:active {
     transform: scaleX(1);
   }
   .download-link:hover {
-    background-color: #142840;
+    background-color: rgb(100 160 196 / 0.56);
   }
-  .download-link:hover .download-chip svg {
+  .download-link:hover:after {
+    opacity: 1;
+  }
+  .download-link:hover .download-arrow {
     transform: translateY(2px);
   }
-  .download-link:hover > span:not(.download-chip) {
+  .download-link:hover > span {
     transform: translate(3px, -3px);
   }
   .github:hover {
-    background-color: rgb(255 255 255 / 0.7);
+    background-color: rgb(100 160 196 / 0.34);
   }
   .github:hover .github-star {
     fill: #c98a0b;
@@ -502,6 +518,10 @@ button:active {
   }
 }
 @media (min-width: 901px) {
+  .hero.gl-ready .download-link {
+    color: #ffffff;
+    text-shadow: 0 1px 0 rgb(20 70 120 / 0.35);
+  }
   .hero.gl-ready .download-link:focus-visible {
     outline-color: #f8fcff;
   }
@@ -578,7 +598,7 @@ button:active {
     margin-top: 28px;
     height: 54px;
     font-size: 17px;
-    padding-inline: 24px 6px;
+    padding-inline: 26px;
   }
   .github {
     height: 36px;

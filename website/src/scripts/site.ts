@@ -65,7 +65,13 @@ export function start() {
       pointerX = 0.5;
       pointerY = 0.5;
     };
+    const glint = (event: PointerEvent) => {
+      const box = download.getBoundingClientRect();
+      download.style.setProperty("--x", `${event.clientX - box.left}px`);
+      download.style.setProperty("--y", `${event.clientY - box.top}px`);
+    };
     if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      download.addEventListener("pointermove", glint);
       hero.addEventListener("pointermove", pointer);
       hero.addEventListener("pointerleave", leave);
     }
@@ -172,6 +178,7 @@ export function start() {
       surface?.dispose();
       viewObserver.disconnect();
       hero.classList.remove("gl-ready", "opening-pending");
+      download.removeEventListener("pointermove", glint);
       hero.removeEventListener("pointermove", pointer);
       hero.removeEventListener("pointerleave", leave);
       hero.removeEventListener("wheel", wheel);
