@@ -1,0 +1,32 @@
+---
+import Base from '../layouts/Base.astro';
+import Brand from '../components/Brand.astro';
+import { github, download } from '../data/site';
+import brand from '../data/brand.json';
+---
+<Base>
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <script is:inline>
+        const openingHero = document.currentScript.closest('.hero');
+        let showOpening = true;
+        try { showOpening = sessionStorage.getItem('quill-opening-v3') !== 'seen'; } catch {}
+        if (showOpening && matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+          openingHero.classList.add('opening-pending');
+          setTimeout(() => openingHero.classList.remove('opening-pending'), 3500);
+        }
+      </script>
+      <div class="daylight" aria-hidden="true"></div>
+      <canvas class="light-canvas" aria-hidden="true"></canvas>
+      <header class="hero-nav shell"><p>A writing app for Mac.</p><a class="text-link" href={github}>GitHub <span aria-hidden="true">↗</span></a></header>
+      <h1 id="hero-title" class="sr-only">Quill. A writing app for Mac.</h1>
+      <div class="hero-art" aria-hidden="true"><Brand class="hero-mark" /></div>
+      <svg class="intro-q" viewBox="-376.1853 -413.4282 768.9853 965.6282" aria-hidden="true"><path d={brand.q} pathLength="1" fill-rule="evenodd" /></svg>
+      <div class="hero-bottom shell"><div class="hero-copy"><h2>Hold a key. Say the change.</h2><p>Your AI edits right in your draft.</p></div><a class="download-link" href={download}>Download for Mac <span aria-hidden="true">↗</span></a></div>
+      <button class="replay text-link" type="button" hidden>Replay opening <span aria-hidden="true">↺</span></button>
+      <button class="skip-intro" type="button" aria-label="Skip opening" hidden>Skip</button>
+    </section>
+
+  </main>
+  <script>import { start } from '../scripts/site'; start();</script>
+</Base>

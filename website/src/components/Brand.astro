@@ -1,0 +1,5 @@
+---
+import brand from '../data/brand.json';
+const { class: className = '', part = 'wordmark' } = Astro.props;
+---
+<svg class={className} viewBox="-442.9 -561 2157.9 1137.2" fill="currentColor" aria-hidden="true"><path d={part === 'q' ? brand.q : brand.wordmark} fill-rule="evenodd" /></svg>
