@@ -48,12 +48,18 @@ struct Asked {
 @MainActor
 @Observable
 final class Workspace {
-    static let desk = Ledger.dir.appending(path: "desk")
+    static let desks = Ledger.dir.appending(path: "desk")
+    let desk: URL
+    nonisolated static let skipped: Set<String> = ["node_modules", "build", "dist", "target", "Pods", "DerivedData", "vendor", "__pycache__", "venv"]
 
     var vault: URL
+    let home: Bool
+    @ObservationIgnored let voiceHome: () -> URL
     var notes: [Note] = [] {
         didSet { editor?.titles(notes.map(\.title)) }
     }
+    @ObservationIgnored private var scanning = false
+    @ObservationIgnored private var rescan = false
     var current: URL?
     var phase: Phase = .idle {
         didSet { remedy = nil }
@@ -98,7 +104,7 @@ final class Workspace {
     @ObservationIgnored private var agent: Agent
     @ObservationIgnored private var reply = ""
     @ObservationIgnored private var tagged: String?
-    @ObservationIgnored private var places: [URL: (NSRange, CGFloat)] = [:]
+    @ObservationIgnored private var places: [URL: (NSRange, Int, CGFloat)] = [:]
     @ObservationIgnored private var held: [Tell] = []
     @ObservationIgnored private var proposed = false
     @ObservationIgnored private var briefed: String?
@@ -106,13 +112,16 @@ final class Workspace {
     @ObservationIgnored private var matesBriefed: [String: String] = [:]
     @ObservationIgnored private var signed: String?
     @ObservationIgnored private var absent: [String] = []
-    @ObservationIgnored lazy var keeper = VoiceKeeper(vault: vault, spec: spec)
+    @ObservationIgnored lazy var keeper = VoiceKeeper(vault: home ? vault : voiceHome(), spec: spec)
     @ObservationIgnored let listener = Listener()
     @ObservationIgnored var turnStarted: CFAbsoluteTime = 0
     @ObservationIgnored var firstChangeAt: CFAbsoluteTime?
 
-    init(vault: URL) {
+    init(vault: URL, home: Bool = true, voiceHome: @escaping () -> URL = { URL(fileURLWithPath: Prefs.vault ?? NSHomeDirectory() + "/Quill") }) {
         self.vault = vault
+        self.home = home
+        self.voiceHome = voiceHome
+        desk = Workspace.desks.appending(path: Workspace.key(vault))
         mode = Prefs.mode
         let id = Prefs.agent
         agentID = id
@@ -175,6 +184,10 @@ final class Workspace {
         editor.onResolve = { [weak self] hunks, outcome in self?.resolved(hunks, outcome) }
         editor.onUndo = { name, back in Ledger.event(back ? "undo" : "redo", detail: name) }
         editor.onOpenNote = { [weak self] link in self?.follow(link) }
+        editor.onEmbed = { [weak self, weak editor] target in
+            guard let self, let editor else { return }
+            editor.embeds([target: Embeds.payload(target, from: current, root: vault, notes: notes)])
+        }
     }
 
     func replace(_ agent: Agent) {
@@ -201,7 +214,7 @@ final class Workspace {
     func warm() {
         let agent = agent
         Task {
-            try? await agent.prepare(cwd: Self.desk, readable: reachable)
+            try? await agent.prepare(cwd: desk, readable: reachable)
             sync()
         }
         Task { try? await listener.prepare() }
@@ -222,18 +235,22 @@ final class Workspace {
     }
 
     func start() {
+        Files.roots.insert(vault.standardizedFileURL.path)
+        Embeds.warm(vault)
         try? FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(at: Self.desk, withIntermediateDirectories: true)
-        refresh()
+        try? FileManager.default.createDirectory(at: desk, withIntermediateDirectories: true)
         watch()
         warm()
         checkAgents()
-        keeper = VoiceKeeper(vault: vault, spec: spec)
-        if !FileManager.default.fileExists(atPath: keeper.url.path) || Date.now.timeIntervalSince1970 - Prefs.measuredAt > 86_400 {
+        keeper = VoiceKeeper(vault: home ? vault : voiceHome(), spec: spec)
+        if home, !FileManager.default.fileExists(atPath: keeper.url.path) || Date.now.timeIntervalSince1970 - Prefs.measuredAt > 86_400 {
             Task { await measure() }
         }
-        let last = Prefs.last.map { URL(fileURLWithPath: $0) }
-        if current == nil, let url = notes.first(where: { $0.url.path == last?.path })?.url ?? notes.first?.url { open(url) }
+        let last = (home ? Prefs.last : Prefs.last(in: vault.path)).map { URL(fileURLWithPath: $0) }
+        refreshLater { [weak self] in
+            guard let self, current == nil, let url = notes.first(where: { $0.url.path == last?.path })?.url ?? notes.first?.url else { return }
+            open(url)
+        }
     }
 
     func switchVault(_ url: URL) {
@@ -241,7 +258,7 @@ final class Workspace {
         leave()
         unwatch()
         vault = url
-        Prefs.vault = url.path
+        if home { Prefs.vault = url.path }
         current = nil
         editor?.load("")
         agent.shutdown()
@@ -253,15 +270,58 @@ final class Workspace {
         FileManager.default.displayName(atPath: vault.path)
     }
 
+    var scope: String? {
+        guard let current else { return nil }
+        let folder = current.deletingLastPathComponent().standardizedFileURL.path
+        let root = vault.standardizedFileURL.path
+        guard folder == root || folder.hasPrefix(root + "/") else { return nil }
+        let rest = folder.dropFirst(root.count).split(separator: "/").map(String.init)
+        return ([title] + rest).joined(separator: " › ")
+    }
+
     func refresh() {
+        show(Self.scan(vault))
+    }
+
+    func refreshLater(then: (@MainActor @Sendable () -> Void)? = nil) {
+        if scanning {
+            rescan = true
+            return
+        }
+        scanning = true
+        let vault = vault
+        Task.detached(priority: .userInitiated) {
+            let found = Workspace.scan(vault)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                scanning = false
+                if vault == self.vault { show(found) }
+                then?()
+                if rescan {
+                    rescan = false
+                    refreshLater()
+                }
+            }
+        }
+    }
+
+    private func show(_ found: [Note]) {
+        if found != notes { notes = found }
+    }
+
+    nonisolated static func scan(_ vault: URL) -> [Note] {
         let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
-        let found = FileManager.default.enumerator(at: vault, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants])?
-            .compactMap { $0 as? URL }
-            .filter { $0.pathExtension.lowercased() == "md" }
-            .map { url in Note(url: url, modified: (try? url.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast) }
-            ?? []
-        let sorted = found.sorted { $0.modified > $1.modified }
-        if sorted != notes { notes = sorted }
+        var found: [Note] = []
+        let walker = FileManager.default.enumerator(at: vault, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants])
+        while let url = walker?.nextObject() as? URL {
+            if skipped.contains(url.lastPathComponent) {
+                walker?.skipDescendants()
+                continue
+            }
+            guard url.pathExtension.lowercased() == "md" else { continue }
+            found.append(Note(url: url, modified: (try? url.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast))
+        }
+        return found.sorted { $0.modified > $1.modified }
     }
 
     func open(_ url: URL) {
@@ -271,10 +331,15 @@ final class Workspace {
         margin = []
         let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         current = url
-        if url.path.hasPrefix(vault.path) { Prefs.last = url.path }
+        if url.path.hasPrefix(vault.path + "/") {
+            if home { Prefs.last = url.path } else { Prefs.setLast(url.path, in: vault.path) }
+        }
         saved = text
-        let (selection, y) = places[url] ?? (NSRange(location: 0, length: 0), 0)
-        editor?.load(text, caret: NSMaxRange(selection) <= (text as NSString).length ? selection.location : 0, top: y)
+        let (selection, top, shift) = places[url] ?? (NSRange(location: 0, length: 0), 0, 0)
+        var found: [String: [String: Any]] = [:]
+        for target in Embeds.targets(in: text) { found[target] = Embeds.payload(target, from: url, root: vault, notes: notes) }
+        editor?.embeds(found, early: true)
+        editor?.load(text, caret: NSMaxRange(selection) <= (text as NSString).length ? selection.location : 0, top: top, shift: shift)
         if case .failed = phase { phase = .idle }
     }
 
@@ -283,7 +348,7 @@ final class Workspace {
         settleReview()
         flushSave()
         guard let url = current, let editor else { return }
-        places[url] = (editor.selectedRange(), editor.top)
+        places[url] = (editor.selectedRange(), editor.top, editor.shift)
         let name = url.deletingPathExtension().lastPathComponent
         guard name.wholeMatch(of: /Untitled( \d+)?/) != nil,
               let first = editor.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first,
@@ -315,7 +380,7 @@ final class Workspace {
         }
         let url = folder.appending(path: "\(name).md")
         try? "# \n".write(to: url, atomically: true, encoding: .utf8)
-        refresh()
+        notes.insert(Note(url: url, modified: .now), at: 0)
         open(url)
         editor?.setSelectedRange(NSRange(location: 2, length: 0))
         editor?.focus()
@@ -380,7 +445,7 @@ final class Workspace {
         let url = vault.appending(path: path.replacingOccurrences(of: ":", with: "-") + ".md")
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? "# \(url.deletingPathExtension().lastPathComponent)\n\n".write(to: url, atomically: true, encoding: .utf8)
-        refresh()
+        notes.insert(Note(url: url, modified: .now), at: 0)
         open(url)
     }
 
@@ -399,7 +464,7 @@ final class Workspace {
                 Prefs.last = target.path
                 transcript[target] = transcript.removeValue(forKey: note.url)
             }
-            refresh()
+            notes = notes.map { $0.url == note.url ? Note(url: target, modified: $0.modified) : $0 }
             return nil
         } catch {
             return "Couldn't rename “\(note.title)”."
@@ -413,7 +478,7 @@ final class Workspace {
             editor?.load("")
         }
         try? FileManager.default.trashItem(at: note.url, resultingItemURL: nil)
-        refresh()
+        notes.removeAll { $0.url == note.url }
         if current == nil, let first = notes.first { open(first.url) }
     }
 
@@ -474,6 +539,20 @@ final class Workspace {
         editor.play(changes, as: .other, turn: 0)
     }
 
+    func refreshEmbeds(_ changed: [String]) {
+        guard let editor, let current else { return }
+        let others = changed.map { URL(fileURLWithPath: $0) }.filter { $0.standardizedFileURL != current.standardizedFileURL && !$0.lastPathComponent.hasPrefix(".") }
+        guard !others.isEmpty else { return }
+        let names = Set(others.map { $0.deletingPathExtension().lastPathComponent.lowercased() })
+        var found: [String: [String: Any]] = [:]
+        for target in Embeds.targets(in: editor.text) {
+            let file = (target.hasPrefix("path:") ? String(target.dropFirst(5)) : target).split(separator: "#").first.map(String.init) ?? target
+            guard names.contains(URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent.lowercased()) else { continue }
+            found[target] = Embeds.payload(target, from: current, root: vault, notes: notes)
+        }
+        editor.embeds(found)
+    }
+
     func reconcileDesk() {
         guard busy, let file = deskFile, let editor else { return }
         guard let disk = try? String(contentsOf: file, encoding: .utf8), disk != deskBase else { return }
@@ -497,16 +576,23 @@ final class Workspace {
         editor.play(changes, as: .agent(turn: turn, flags: flags, by: signed), turn: turn)
     }
 
-    var reachable: [URL] { voiceSources + (Guide.skill.map { [$0] } ?? []) }
+    var reachable: [URL] { [vault] + voiceSources.filter { $0 != vault } + (Guide.skill.map { [$0] } ?? []) }
 
     var voiceSources: [URL] {
-        [vault] + Prefs.voiceSources.map { URL(fileURLWithPath: $0) }.filter { $0 != vault }
+        let base = home ? vault : voiceHome()
+        return [base] + Prefs.voiceSources.map { URL(fileURLWithPath: $0) }.filter { $0 != base }
+    }
+
+    nonisolated static func key(_ note: URL) -> String {
+        var h: UInt64 = 1469598103934665603
+        for b in note.standardizedFileURL.path.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
+        return String(h, radix: 36)
     }
 
     @discardableResult
     func measure() async -> Fingerprint {
         let f = await keeper.measure(voiceSources)
-        refresh()
+        refreshLater()
         return f
     }
 
@@ -545,9 +631,10 @@ final class Workspace {
         let text = editor.text
         let title = url.deletingPathExtension().lastPathComponent
         let fm = FileManager.default
-        for stale in (try? fm.contentsOfDirectory(at: Self.desk, includingPropertiesForKeys: nil)) ?? [] { try? fm.removeItem(at: stale) }
-        try? fm.createDirectory(at: Self.desk, withIntermediateDirectories: true)
-        let file = Self.desk.appending(path: "\(title).md")
+        for stale in (try? fm.contentsOfDirectory(at: desk, includingPropertiesForKeys: nil)) ?? [] { try? fm.removeItem(at: stale) }
+        let room = desk.appending(path: Self.key(url))
+        try? fm.createDirectory(at: room, withIntermediateDirectories: true)
+        let file = room.appending(path: "\(title).md")
         do { try text.write(to: file, atomically: true, encoding: .utf8) } catch {
             fail("Couldn't prepare a working copy of \(title).")
             return
@@ -559,7 +646,7 @@ final class Workspace {
         let crewing = mode == .guided ? company : []
         let links = Links.found(in: [words, selection ?? "", text])
         var request = Request(words: words, title: title, path: file.path, text: text, selection: selection, mode: mode,
-                              peers: crewing.map(\.name))
+                              peers: crewing.map(\.name), folder: url.deletingLastPathComponent().path, root: vault.path)
         signed = crewing.isEmpty ? nil : spec.name
         absent = []
         busy = true
@@ -597,7 +684,7 @@ final class Workspace {
                 let runs = crewing.map { mate in
                     Task { await self.run(mate, request, title: title, voice: voice, peers: [lead] + crewing.filter { $0 != mate }.map(\.name)) }
                 }
-                try await agent.prepare(cwd: Self.desk, readable: reachable)
+                try await agent.prepare(cwd: desk, readable: reachable)
                 sync()
                 guard turn == id else { return }
                 let brief = agent.conversation == nil || agent.conversation != briefed
@@ -653,7 +740,7 @@ final class Workspace {
 
     private func run(_ mate: AgentSpec, _ request: Request, title: String, voice: String?, peers: [String]) async -> (AgentSpec, String)? {
         let fm = FileManager.default
-        let dir = Ledger.dir.appending(path: "crew/\(mate.id)")
+        let dir = desk.appending(path: "crew/\(mate.id)")
         try? fm.removeItem(at: dir)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appending(path: "\(title).md")
@@ -883,18 +970,31 @@ final class Workspace {
     }
 
     private func watch() {
-        let paths = [vault.path, Self.desk.path] as CFArray
+        let paths = [vault.path, desk.path] as CFArray
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
             let ws = Unmanaged<Workspace>.fromOpaque(info).takeUnretainedValue()
             let changed = (unsafeBitCast(paths, to: NSArray.self) as? [String]) ?? []
+            let moved = UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemRenamed)
+            let lost = UInt32(kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped)
+            let reshaped = (0..<count).filter { flags[$0] & moved != 0 && $0 < changed.count }.map { changed[$0] }
+            let rescan = (0..<count).contains { flags[$0] & lost != 0 }
+            let folder = UInt32(kFSEventStreamEventFlagItemIsDir)
+            let listed = rescan || (0..<count).contains { i in
+                guard i < changed.count else { return false }
+                let url = URL(fileURLWithPath: changed[i])
+                guard !url.pathComponents.contains(where: { $0.hasPrefix(".") || Workspace.skipped.contains($0) }) else { return false }
+                return url.pathExtension.lowercased() == "md" || (flags[i] & folder != 0 && flags[i] & moved != 0)
+            }
             MainActor.assumeIsolated {
-                let desk = Workspace.desk.resolvingSymlinksInPath().path
+                if rescan { Embeds.forget(ws.vault) } else { Embeds.noticed(reshaped, root: ws.vault) }
+                let desk = ws.desk.resolvingSymlinksInPath().path
                 if changed.contains(where: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path.hasPrefix(desk) }) { ws.reconcileDesk() }
                 if changed.contains(where: { !URL(fileURLWithPath: $0).resolvingSymlinksInPath().path.hasPrefix(desk) }) {
                     ws.reconcileVault()
-                    ws.refresh()
+                    if listed { ws.refreshLater() }
+                    ws.refreshEmbeds(changed)
                 }
             }
         }

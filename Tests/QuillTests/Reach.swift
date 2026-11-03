@@ -85,3 +85,42 @@ struct Reach {
     #expect(FileManager.default.fileExists(atPath: bundled.appending(path: "references/tell-catalog.md").path))
     #expect(Guide.briefing().contains("# Prose"))
 }
+
+@MainActor
+struct Architecture {
+    nonisolated static let agent = ProcessInfo.processInfo.environment["QUILL_ARCH"]
+    nonisolated static let root = ProcessInfo.processInfo.environment["QUILL_ARCH_ROOT"]
+
+    @Test(.enabled(if: agent != nil && root != nil), .timeLimit(.minutes(10)))
+    func aDiagramOnlyNamesRealModules() async throws {
+        let root = URL(fileURLWithPath: Self.root!)
+        let file = root.appending(path: "docs/architecture.md")
+        let base = "# Architecture\n\n"
+        try base.write(to: file, atomically: true, encoding: .utf8)
+        let agent = AgentSpec.named(Self.agent!).make()
+        defer { agent.shutdown() }
+        try await agent.prepare(cwd: file.deletingLastPathComponent(), readable: [root])
+        let request = Request(words: "architecture diagram", title: "architecture", path: file.path, text: base, selection: nil, mode: .guided, folder: file.deletingLastPathComponent().path, root: root.path)
+        var read: [String] = []
+        try await agent.send(prompt(request, canEditFiles: agent.canEditFiles, briefing: Guide.briefing()), file: file, base: base) { e in
+            switch e {
+            case .proposed(let next): try? next.write(to: file, atomically: true, encoding: .utf8)
+            case .read(let path): read.append(path)
+            default: break
+            }
+        }
+        let draft = try String(contentsOf: file, encoding: .utf8)
+        Swift.print("[arch] read \(read.count) files\n[arch] draft:\n\(draft)")
+        let fence = try #require(draft.firstMatch(of: /```mermaid\n([\s\S]*?)```/), "no mermaid block")
+        let labels = String(fence.1).matches(of: /[\[\(\{]+"?([^\]\)\}"|]+)"?[\]\)\}]+/).map { String($0.1).trimmingCharacters(in: .whitespaces) }
+        #expect(!labels.isEmpty)
+        let corpus = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)!.compactMap { $0 as? URL }.map(\.path).joined(separator: "\n").lowercased()
+        var missing: [String] = []
+        for label in labels {
+            let words = label.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "." && $0 != "_" && $0 != "-" }).map(String.init).filter { $0.count > 2 }
+            if !words.contains(where: { corpus.contains($0) }) { missing.append(label) }
+        }
+        Swift.print("[arch] \(labels.count) nodes, ungrounded: \(missing)")
+        #expect(missing.isEmpty, "nodes with no matching path: \(missing)")
+    }
+}

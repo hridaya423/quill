@@ -16,7 +16,10 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.42.1",
     "@lezer/markdown": "^1.6.1",
-    "@prosemark/core": "0.0.11"
+    "@lezer/yaml": "^1.0.4",
+    "@prosemark/core": "0.0.11",
+    "katex": "^0.16.22",
+    "pele": "^1.13.0"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

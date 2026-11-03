@@ -153,7 +153,7 @@ struct LoopTests {
         #expect(!ws.review.isEmpty)
         ws.flushSave()
         #expect(try String(contentsOf: note, encoding: .utf8) == Self.original)
-        #expect(agent.prompts.first?.contains(Workspace.desk.path) == true)
+        #expect(agent.prompts.first?.contains(ws.desk.path) == true)
 
         ws.keep()
         ws.flushSave()
@@ -162,6 +162,42 @@ struct LoopTests {
         let record = Ledger.read(TurnRecord.self, from: Ledger.turns).last
         #expect(record?.request == "make the first sentence confident")
         #expect(record?.exchanges.allSatisfy { $0.outcome == .kept } == true)
+    }
+
+    @Test(.enabled(if: support != nil)) func twoWindowsWithTheSameNoteNameNeverShareAWorkingCopy() async throws {
+        let base = FileManager.default.temporaryDirectory.appending(path: "quill-two-\(UUID().uuidString)")
+        var opened: [(Workspace, Page, ScriptedAgent, URL)] = []
+        for (name, phrase) in [("site", "SITE"), ("api", "API")] {
+            let root = base.appending(path: name)
+            let folder = root.appending(path: "docs")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let note = folder.appending(path: "architecture.md")
+            try Self.original.write(to: note, atomically: true, encoding: .utf8)
+            let agent = ScriptedAgent([{ $0.replacingOccurrences(of: "Writers lose hours", with: "\(phrase) writers lose hours") }])
+            let ws = Workspace(vault: root, home: false)
+            let text = Page()
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = text
+            Self.windows.append(window)
+            for _ in 0..<200 where !text.ready { try await Task.sleep(for: .milliseconds(20)) }
+            ws.attach(text)
+            ws.replace(agent)
+            ws.start()
+            ws.open(note)
+            opened.append((ws, text, agent, note))
+        }
+        defer { opened.forEach { $0.0.quit() } }
+        for (ws, _, _, _) in opened { ws.ask("tighten it") }
+        for (ws, _, _, _) in opened { await settle(ws) }
+        let (site, api) = (opened[0], opened[1])
+        #expect(site.1.text.contains("SITE writers lose hours") && !site.1.text.contains("API"))
+        #expect(api.1.text.contains("API writers lose hours") && !api.1.text.contains("SITE"))
+        #expect(site.0.desk != api.0.desk)
+        let sitePrompt = try #require(site.2.prompts.first)
+        #expect(sitePrompt.contains("The note lives in \(site.3.deletingLastPathComponent().path), inside \(base.appending(path: "site").path)"))
+        #expect(sitePrompt.contains(site.0.desk.path))
+        #expect(!sitePrompt.contains(api.0.desk.path))
     }
 
     @Test(.enabled(if: support != nil)) func oneUndoTakesBackAWholeTurn() async throws {

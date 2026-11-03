@@ -274,6 +274,13 @@ struct Snapshots {
             let rep = NSBitmapImageRep(cgImage: image)
             try rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appending(path: "stage-\(name).png"))
         }
+        let base = Date(timeIntervalSinceReferenceDate: 0)
+        for t in [0.6, 1.2, 1.6, 2.3, 2.9, 3.6] {
+            let renderer = ImageRenderer(content: Stage(dawn: min(1, 0.25 + t / 3.2), drift: 0, glass: Glass(start: base), now: base.addingTimeInterval(t)).frame(width: 1240, height: 820))
+            renderer.scale = 2
+            guard let image = renderer.cgImage, let dir = Self.dir else { continue }
+            try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appending(path: "stage-glass-\(t).png"))
+        }
         let pitch = ImageRenderer(content: ZStack { Stage(dawn: 0.62, drift: 220); Pitch(place: "Obsidian Vault", notes: 561) }
             .frame(width: 1000, height: 620).environment(\.colorScheme, .dark))
         pitch.scale = 2

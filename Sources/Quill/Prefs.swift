@@ -52,6 +52,14 @@ enum Prefs {
         set { store.set(newValue, forKey: "last") }
     }
 
+    static var folders: [String] {
+        get { store.stringArray(forKey: "folders") ?? [] }
+        set { store.set(newValue, forKey: "folders") }
+    }
+
+    static func last(in root: String) -> String? { store.string(forKey: "last." + root) }
+    static func setLast(_ path: String, in root: String) { store.set(path, forKey: "last." + root) }
+
     static var crew: [String] {
         get { store.stringArray(forKey: "crew") ?? [] }
         set { store.set(newValue, forKey: "crew") }

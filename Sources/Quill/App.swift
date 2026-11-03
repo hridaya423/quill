@@ -57,74 +57,117 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         app.run()
     }
 
-    private var window: NSWindow!
-    private var sidebar: NSSplitViewItem!
+    private var desks: [Desk] = []
     private var settings: NSWindow?
     private var tabs: SettingsTabs?
-    private var overlay: NSView?
-    private var ws: Workspace!
-    private var editor: EditorController!
+    private var restoring = false
+
+    private var desk: Desk {
+        let key = NSApp.keyWindow ?? NSApp.mainWindow
+        return desks.first { $0.window === key } ?? desks.first { $0.ws.home } ?? desks[0]
+    }
+    private var ws: Workspace { desk.ws }
+    private var editor: EditorController { desk.editor }
+    private var window: NSWindow { desk.window }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Brand.register()
         let env = ProcessInfo.processInfo.environment
         let vault = URL(fileURLWithPath: env["QUILL_VAULT"] ?? Prefs.vault ?? NSHomeDirectory() + "/Quill")
         let fresh = !FileManager.default.fileExists(atPath: vault.path)
-        ws = Workspace(vault: vault)
-        ws.showSettings = { [weak self] in self?.show($0) }
         if fresh { seed(vault) }
-
-        editor = EditorController(ws: ws)
-        let split = NSSplitViewController()
-        let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws, chrome: editor.chrome, settings: { [weak self] in self?.show($0) })))
-        sidebar = side
-        side.minimumThickness = 210
-        side.maximumThickness = 320
-        side.canCollapse = true
-        split.addSplitViewItem(side)
-        let main = NSSplitViewItem(viewController: editor)
-        main.titlebarSeparatorStyle = .none
-        split.addSplitViewItem(main)
-
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 820),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                          backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.contentViewController = split
-        window.setContentSize(NSSize(width: 1240, height: 820))
-        window.minSize = NSSize(width: 640, height: 420)
-        if !window.setFrameUsingName("Quill"), let area = (window.screen ?? NSScreen.main)?.visibleFrame {
-            window.setFrameOrigin(NSPoint(x: area.midX - window.frame.width / 2, y: area.midY - window.frame.height / 2))
-        }
-        window.setFrameAutosaveName("Quill")
-        window.backgroundColor = Theme.paper
-        let toggle = NSButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!,
-                              target: nil, action: #selector(NSSplitViewController.toggleSidebar(_:)))
-        toggle.bezelStyle = .accessoryBarAction
-        toggle.isBordered = false
-        toggle.contentTintColor = Theme.soft
-        toggle.toolTip = "Toggle Sidebar (⌃⌘S)"
-        toggle.frame = NSRect(x: 4, y: 0, width: 30, height: 28)
-        let holder = NSView(frame: NSRect(x: 0, y: 0, width: 38, height: 28))
-        holder.addSubview(toggle)
-        let accessory = NSTitlebarAccessoryViewController()
-        accessory.view = holder
-        accessory.layoutAttribute = .left
-        window.addTitlebarAccessoryViewController(accessory)
-        window.makeKeyAndOrderFront(nil)
-        editor.text.focus()
-
         NSApp.mainMenu = menu()
-        ws.start()
+        restoring = true
+        let saved = Prefs.folders.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        let others = saved.filter { $0.standardizedFileURL.path != vault.standardizedFileURL.path }
+        if saved.isEmpty || saved.count != others.count || env["QUILL_VAULT"] != nil { _ = open(root: vault, home: true) }
+        for root in others { _ = open(root: root, home: false) }
+        restoring = false
+        remember()
+        desk.editor.text.focus()
         NSApp.activate()
         if !Prefs.onboarded || ProcessInfo.processInfo.arguments.contains("--onboarding") { onboard() }
+    }
+
+    @discardableResult
+    private func open(root: URL, home: Bool) -> Desk {
+        let root = root.standardizedFileURL
+        if let existing = desks.first(where: { $0.ws.vault.standardizedFileURL.path == root.path }) {
+            existing.window.makeKeyAndOrderFront(nil)
+            return existing
+        }
+        let made = Desk(root: root, home: home, cascadeFrom: desks.last?.window) { [weak self] in self?.show($0) }
+        made.onClose = { [weak self] gone in
+            guard let self else { return }
+            self.desks.removeAll { $0 === gone }
+            if !self.terminating { self.remember() }
+        }
+        desks.append(made)
+        made.window.makeKeyAndOrderFront(nil)
+        made.ws.start()
+        if !home { NSDocumentController.shared.noteNewRecentDocumentURL(root) }
+        if !restoring { remember() }
+        return made
+    }
+
+    private var terminating = false
+
+    private func remember() {
+        Prefs.folders = desks.map { $0.ws.vault.path }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { open(url) }
+    }
+
+    private func open(_ url: URL) {
+        var folder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &folder) else { return }
+        if folder.boolValue {
+            open(root: url, home: url.standardizedFileURL.path == Self.homeVault.path)
+            return
+        }
+        let path = url.standardizedFileURL.path
+        let owner = desks.filter { path.hasPrefix($0.ws.vault.standardizedFileURL.path + "/") }
+            .max { $0.ws.vault.path.count < $1.ws.vault.path.count }
+        let target = owner ?? Self.root(for: url).map { open(root: $0, home: false) } ?? open(root: Self.homeVault, home: true)
+        target.window.makeKeyAndOrderFront(nil)
+        target.ws.refreshLater()
+        target.ws.open(url.standardizedFileURL)
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+    }
+
+    static var homeVault: URL { URL(fileURLWithPath: Prefs.vault ?? NSHomeDirectory() + "/Quill").standardizedFileURL }
+
+    static func root(for file: URL) -> URL? {
+        let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL
+        var dir = file.deletingLastPathComponent().standardizedFileURL
+        let start = dir
+        while dir.path.hasPrefix(home.path + "/") {
+            if FileManager.default.fileExists(atPath: dir.appending(path: ".git").path) { return dir }
+            dir = dir.deletingLastPathComponent()
+        }
+        let broad = start == home || start.deletingLastPathComponent() == home || start.path == "/" || !start.path.hasPrefix(home.path + "/")
+        return broad ? nil : start
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag, desks.isEmpty {
+            _ = open(root: Self.homeVault, home: true)
+        }
+        return true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        remember()
+        terminating = true
+        return .terminateNow
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        ws.quit()
+        for d in desks { d.ws.quit() }
     }
 
     private func seed(_ vault: URL) {
@@ -182,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("About Quill", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
             .separator(),
             item("Settings…", #selector(openSettings), ",", target: self),
+            item("Install Command Line Tool…", #selector(installTool), target: self),
             .separator(),
             servicesItem,
             .separator(),
@@ -193,8 +237,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         _ = add("File", [
             item("New Note", #selector(newNote), "n", target: self),
+            item("New Note in Folder…", #selector(newNoteInFolder), "n", [.command, .option], target: self),
+            .separator(),
+            item("Open…", #selector(openFolder), "o", target: self),
+            recent(),
             item("Quick Open…", #selector(quickOpen), "p", target: self),
-            item("Open Folder…", #selector(openFolder), "o", target: self),
             .separator(),
             item("Save", #selector(save), "s", target: self),
             item("Rename…", #selector(rename), "", target: self),
@@ -313,7 +360,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return bar
     }
 
-    @objc private func newNote() { ws.create() }
+    private func recent() -> NSMenuItem {
+        let list = NSMenu(title: "Open Recent")
+        list.perform(NSSelectorFromString("_setMenuName:"), with: "NSRecentDocumentsMenu")
+        list.addItem(NSMenuItem(title: "Clear Menu", action: #selector(NSDocumentController.clearRecentDocuments(_:)), keyEquivalent: ""))
+        let item = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        item.submenu = list
+        return item
+    }
+
+    @objc private func newNote() {
+        let here = ws.current?.deletingLastPathComponent()
+        ws.create(in: here.flatMap { $0.path.hasPrefix(ws.vault.path) && FileManager.default.fileExists(atPath: $0.path) ? $0 : nil })
+    }
+
+    @objc private func newNoteInFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "New Note Here"
+        panel.message = "Quill writes the note into this folder and reads the folder when you ask about it."
+        panel.directoryURL = ws.current?.deletingLastPathComponent() ?? ws.vault
+        panel.beginSheetModal(for: window) { [weak self] r in
+            guard r == .OK, let self, let folder = panel.url?.standardizedFileURL else { return }
+            let path = folder.path
+            let owner = self.desks.filter { path == $0.ws.vault.standardizedFileURL.path || path.hasPrefix($0.ws.vault.standardizedFileURL.path + "/") }
+                .max { $0.ws.vault.path.count < $1.ws.vault.path.count }
+            let target = owner ?? self.open(root: Self.root(for: folder.appending(path: "x.md")) ?? folder, home: false)
+            target.window.makeKeyAndOrderFront(nil)
+            target.ws.create(in: folder)
+        }
+    }
+
+    @objc private func installTool() {
+        guard let tool = Bundle.main.url(forResource: "quill", withExtension: nil, subdirectory: "bin") else {
+            ws.fail("This build of Quill has no command line tool. Use the Quill in Applications.")
+            return
+        }
+        let candidates = ["/usr/local/bin", NSHomeDirectory() + "/.local/bin"]
+        let fm = FileManager.default
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let alert = NSAlert()
+        for dir in candidates where fm.isWritableFile(atPath: dir) || (dir.hasPrefix(NSHomeDirectory()) && (try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)) != nil) {
+            let link = dir + "/quill"
+            try? fm.removeItem(atPath: link)
+            guard (try? fm.createSymbolicLink(atPath: link, withDestinationPath: tool.path)) != nil else { continue }
+            alert.messageText = "Installed quill in \(dir)"
+            alert.informativeText = "Type quill . in a terminal to open that folder in Quill, or quill notes.md to open a note."
+                + (path.split(separator: ":").contains(Substring(dir)) || dir == "/usr/local/bin" ? "" : " Add \(dir) to your PATH first.")
+            alert.beginSheetModal(for: window)
+            return
+        }
+        alert.messageText = "Couldn't install the command line tool"
+        alert.informativeText = "Quill couldn't write to /usr/local/bin or ~/.local/bin."
+        alert.beginSheetModal(for: window)
+    }
     @objc private func ask() { editor.command() }
     @objc private func toggleTalk() { editor.toggleTalk() }
     @objc private func holdHint() {}
@@ -326,7 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func previousChange() { ws.step(false) }
     @objc private func chooseModel(_ sender: NSMenuItem) { (sender.representedObject as? String).map(ws.choose(model:)) }
     @objc private func quickOpen() {
-        if sidebar.isCollapsed { sidebar.animator().isCollapsed = false }
+        if desk.sidebar.isCollapsed { desk.sidebar.animator().isCollapsed = false }
         editor.chrome.searching = true
     }
     @objc private func guided() { ws.mode = .guided }
@@ -359,11 +461,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func onboard() {
-        guard let content = window.contentView, overlay == nil else { return }
+        let desk = desks.first { $0.ws.home } ?? desk
+        let ws = desk.ws, editor = desk.editor, window = desk.window
+        guard let content = window.contentView, desk.overlay == nil else { return }
         Prefs.onboardStarted = Date.now.timeIntervalSince1970
         Ledger.event("onboarding-started")
         let run = Firstrunner(current: ws.vault)
-        let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { [weak self] picked in self?.landed(picked) })
+        let host = NSHostingView(rootView: Onboarding(ws: ws, run: run) { [weak self, weak desk] picked in
+            if let desk { self?.landed(picked, in: desk) }
+        })
         host.sizingOptions = []
         host.appearance = NSAppearance(named: .darkAqua)
         host.translatesAutoresizingMaskIntoConstraints = false
@@ -374,12 +480,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             host.topAnchor.constraint(equalTo: content.topAnchor),
             host.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
-        overlay = host
+        desk.overlay = host
         editor.chrome.onboarding = true
         for accessory in window.titlebarAccessoryViewControllers { accessory.view.isHidden = true }
     }
 
-    private func landed(_ picked: (sentence: String, source: String)?) {
+    private func landed(_ picked: (sentence: String, source: String)?, in desk: Desk) {
+        let ws = desk.ws, editor = desk.editor, window = desk.window
         let (sentence, source) = picked ?? ("We are basically trying to kind of build a tool that maybe helps people write better, in a way.", "a sample pitch")
         let practice = Ledger.dir.appending(path: "Practice")
         try? FileManager.default.createDirectory(at: practice, withIntermediateDirectories: true)
@@ -395,15 +502,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editor.chrome.onboarding = false
         for accessory in window.titlebarAccessoryViewControllers { accessory.view.isHidden = false }
         Ledger.event("onboarding-finished")
-        guard let overlay else { return }
+        guard let overlay = desk.overlay else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.15 : 0.7
             ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.77, 0, 0.175, 1)
             overlay.animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
+        }, completionHandler: {
             MainActor.assumeIsolated {
                 overlay.removeFromSuperview()
-                self?.overlay = nil
+                desk.overlay = nil
             }
         })
     }
@@ -420,13 +527,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.init(filenameExtension: "md")!, .folder]
+        panel.allowsMultipleSelection = true
         panel.prompt = "Open"
-        panel.directoryURL = ws.vault
+        panel.message = "Open a folder to write notes in it, or open a note."
+        panel.directoryURL = ws.vault.deletingLastPathComponent()
         panel.beginSheetModal(for: window) { [weak self] r in
-            guard r == .OK, let url = panel.url else { return }
-            self?.ws.switchVault(url)
+            guard r == .OK else { return }
+            self?.application(NSApp, open: panel.urls)
         }
     }
 
@@ -434,7 +543,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func show(_ pane: Pane?) {
         if settings == nil {
-            let tabs = SettingsTabs.make(ws, editor.chrome)
+            let home = desks.first { $0.ws.home } ?? desk
+            let tabs = SettingsTabs.make(home.ws, home.editor.chrome)
             let w = NSWindow(contentViewController: tabs)
             w.styleMask = [.titled, .closable]
             w.toolbarStyle = .preference
@@ -476,6 +586,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: NSMenuItemValidation {}
+
+@MainActor
+final class Desk: NSObject, NSWindowDelegate {
+    let ws: Workspace
+    let editor: EditorController
+    let window: NSWindow
+    let sidebar: NSSplitViewItem
+    var overlay: NSView?
+    var onClose: ((Desk) -> Void)?
+
+    init(root: URL, home: Bool, cascadeFrom previous: NSWindow?, settings: @escaping (Pane?) -> Void) {
+        ws = Workspace(vault: root, home: home)
+        ws.showSettings = settings
+        editor = EditorController(ws: ws)
+        let split = NSSplitViewController()
+        let side = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: Sidebar(ws: ws, chrome: editor.chrome, settings: settings)))
+        side.minimumThickness = 210
+        side.maximumThickness = 320
+        side.canCollapse = true
+        sidebar = side
+        split.addSplitViewItem(side)
+        let main = NSSplitViewItem(viewController: editor)
+        main.titlebarSeparatorStyle = .none
+        split.addSplitViewItem(main)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 820),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                          backing: .buffered, defer: false)
+        super.init()
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = home ? .hidden : .visible
+        window.tabbingMode = .disallowed
+        window.contentViewController = split
+        window.setContentSize(NSSize(width: 1240, height: 820))
+        window.minSize = NSSize(width: 640, height: 420)
+        let name = home ? "Quill" : "Quill " + Workspace.key(root)
+        if !window.setFrameUsingName(name) {
+            if let previous {
+                window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: previous.frame.minX, y: previous.frame.maxY)))
+            } else if let area = (window.screen ?? NSScreen.main)?.visibleFrame {
+                window.setFrameOrigin(NSPoint(x: area.midX - window.frame.width / 2, y: area.midY - window.frame.height / 2))
+            }
+        }
+        window.setFrameAutosaveName(name)
+        window.backgroundColor = Theme.paper
+        let toggle = NSButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!,
+                              target: nil, action: #selector(NSSplitViewController.toggleSidebar(_:)))
+        toggle.bezelStyle = .accessoryBarAction
+        toggle.isBordered = false
+        toggle.contentTintColor = Theme.soft
+        toggle.toolTip = "Toggle Sidebar (⌃⌘S)"
+        toggle.frame = NSRect(x: 4, y: 0, width: 30, height: 28)
+        let holder = NSView(frame: NSRect(x: 0, y: 0, width: 38, height: 28))
+        holder.addSubview(toggle)
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = holder
+        accessory.layoutAttribute = .left
+        window.addTitlebarAccessoryViewController(accessory)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        ws.quit()
+        onClose?(self)
+    }
+}
 
 extension AppDelegate: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {

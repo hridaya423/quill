@@ -332,6 +332,19 @@ struct Pill: View {
                     .onExitCommand { chrome.commanding = false }
                 Keycap("↩").opacity(chrome.draft.isEmpty ? 0.4 : 1)
             }
+            if let scope = ws.scope {
+                HStack(spacing: 5) {
+                    Image(systemName: "folder").font(.system(size: 10, weight: .medium))
+                    Text(scope).lineLimit(1).truncationMode(.head)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Color.soft)
+                .padding(.leading, 23)
+                .padding(.top, 2)
+                .frame(maxWidth: 470, alignment: .leading)
+                .help("The co-writer starts in this folder when you ask about the project")
+                .accessibilityLabel("Reads \(scope)")
+            }
         }
         .onAppear { focused = true }
     }

@@ -451,7 +451,7 @@ struct VoicePane: View {
                 } trailing: {
                     HStack(spacing: 8) {
                         Button(measuring ? "Measuring…" : "Measure Again", action: measure).disabled(measuring)
-                        Button("Open") { ws.refresh(); ws.open(ws.keeper.url) }
+                        Button("Open") { ws.refreshLater(); ws.open(ws.keeper.url) }
                     }
                 }
                 .padding(.vertical, 4)

@@ -1,17 +1,30 @@
 import AppKit
+import WebKit
 import Testing
 @testable import Quill
 
 @MainActor
-func openPage(_ text: String, dark: Bool = false, face: String = "sans") async throws -> (Page, NSWindow) {
+func openPage(_ text: String, dark: Bool = false, face: String = "sans", live: Bool = false) async throws -> (Page, NSWindow) {
     let page = Page()
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 1000), styleMask: [.titled], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     window.contentView = page
     NSApplication.shared.setActivationPolicy(.accessory)
-    window.orderFront(nil)
-    window.setFrameOrigin(NSPoint(x: -6000, y: 200))
+    if live || ProcessInfo.processInfo.environment["QUILL_ONSCREEN"] != nil {
+        let occlusion = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+        if let method = class_getInstanceMethod(WKWebView.self, occlusion) {
+            typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+            unsafeBitCast(method_getImplementation(method), to: Setter.self)(page, occlusion, false)
+        }
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.setFrameOrigin(NSPoint(x: 40, y: 40))
+        window.orderFrontRegardless()
+    } else {
+        window.orderFront(nil)
+        window.setFrameOrigin(NSPoint(x: -6000, y: 200))
+    }
     try await until { page.ready }
     page.face(face)
     page.load(text)

@@ -20,7 +20,8 @@ final class Page: WKWebView {
     private var tokens = 0
     private(set) var isPlaying = false
     private var crossed: [Hunk] = []
-    private(set) var top: CGFloat = 0
+    private(set) var top = 0
+    private(set) var shift: CGFloat = 0
 
     var focused: Int? {
         didSet { if focused != oldValue { pushHunks() } }
@@ -40,6 +41,7 @@ final class Page: WKWebView {
     var onApplyNote: ((Int) -> Void)?
     var onDismissNote: ((Int) -> Void)?
     var onNoteHover: ((Int?) -> Void)?
+    var onEmbed: ((String) -> Void)?
     var editable = true {
         didSet { if editable != oldValue { call("quill.editable(\(editable))") } }
     }
@@ -47,10 +49,12 @@ final class Page: WKWebView {
     init() {
         let config = WKWebViewConfiguration()
         config.suppressesIncrementalRendering = true
+        config.setURLSchemeHandler(Files(), forURLScheme: Files.scheme)
         super.init(frame: .zero, configuration: config)
         config.userContentController.add(Relay(self), name: "quill")
         setValue(false, forKey: "drawsBackground")
         allowsMagnification = false
+        navigationDelegate = self
         if let editor = Brand.url("Editor") {
             loadFileURL(editor.appending(path: "index.html"), allowingReadAccessTo: editor.deletingLastPathComponent())
         }
@@ -62,7 +66,12 @@ final class Page: WKWebView {
 
     func selectedRange() -> NSRange { selection }
 
-    func load(_ text: String, caret: Int = 0, top: CGFloat = 0) {
+    func embeds(_ found: [String: [String: Any]], early: Bool = false) {
+        guard !found.isEmpty else { return }
+        call("quill.embeds(\(json(found)), \(early))")
+    }
+
+    func load(_ text: String, caret: Int = 0, top: Int = 0, shift: CGFloat = 0) {
         generation += 1
         buffer = NSMutableString(string: text)
         selection = NSRange(location: min(caret, buffer.length), length: 0)
@@ -73,7 +82,9 @@ final class Page: WKWebView {
         focused = nil
         isPlaying = false
         self.top = top
-        call("quill.load(\(json(text)), \(generation), \(selection.location), \(Int(top)))")
+        self.shift = shift
+        sent = [:]
+        call("quill.load(\(json(text)), \(generation), \(selection.location), \(top), \(shift))")
         onReview?()
         onLoad?()
     }
@@ -114,16 +125,24 @@ final class Page: WKWebView {
     }
 
     func card(_ hunk: Hunk?) {
-        guard let hunk else { return call("quill.card(null, \(version))") }
+        guard let hunk else { return once("card", "quill.card(null, 0)") }
         let spec: [String: Any] = ["id": hunk.id, "from": hunk.range.location, "to": NSMaxRange(hunk.range), "old": hunk.old, "flags": hunk.flags, "by": hunk.by ?? NSNull()]
-        call("quill.card(\(json(spec)), \(version))")
+        once("card", "quill.card(\(json(spec)), \(version))")
     }
 
     func notes(_ list: [MarginNote], active: Int?, busy: Bool) {
         let specs = list.filter { NSMaxRange($0.range) <= buffer.length }.map { note -> [String: Any] in
             ["id": note.id, "from": note.range.location, "to": NSMaxRange(note.range), "lens": note.lens ?? NSNull(), "note": note.note]
         }
-        call("quill.notes(\(json(specs)), \(active.map(String.init) ?? "null"), \(busy), \(version))")
+        let script = specs.isEmpty ? "quill.notes([], \(active.map(String.init) ?? "null"), \(busy), 0)" : "quill.notes(\(json(specs)), \(active.map(String.init) ?? "null"), \(busy), \(version))"
+        once("notes", script)
+    }
+
+    private var sent: [String: String] = [:]
+    private func once(_ key: String, _ script: String) {
+        guard sent[key] != script else { return }
+        sent[key] = script
+        call(script)
     }
 
     func setReview(_ next: Review) {
@@ -213,7 +232,7 @@ final class Page: WKWebView {
         let list = review.hunks.map { h -> [String: Any] in
             ["id": h.id, "from": h.range.location, "to": NSMaxRange(h.range), "flagged": !h.flags.isEmpty]
         }
-        call("quill.hunks(\(json(list)), \(focused.map(String.init) ?? "null"), \(version))")
+        once("hunks", list.isEmpty ? "quill.hunks([], \(focused.map(String.init) ?? "null"), 0)" : "quill.hunks(\(json(list)), \(focused.map(String.init) ?? "null"), \(version))")
     }
 
     private func edits(_ changes: [Change]) -> String {
@@ -244,7 +263,8 @@ final class Page: WKWebView {
         case "select":
             caret(body)
         case "scroll":
-            top = body["top"] as? CGFloat ?? 0
+            top = body["top"] as? Int ?? 0
+            shift = body["shift"] as? CGFloat ?? 0
         case "error":
             NSLog("Quill page: %@", body["message"] as? String ?? "")
         case "played":
@@ -266,9 +286,14 @@ final class Page: WKWebView {
             onNoteHover?(body["id"] as? Int)
         case "note":
             if let title = body["title"] as? String { onOpenNote?(title) }
+        case "embed":
+            if let target = body["target"] as? String { onEmbed?(target) }
         case "link":
             if let raw = body["url"] as? String {
-                if let url = URL(string: raw), url.scheme != nil { NSWorkspace.shared.open(url) } else { onOpenNote?(raw) }
+                if let url = URL(string: raw), let scheme = url.scheme?.lowercased() {
+                    if ["http", "https", "mailto"].contains(scheme) { NSWorkspace.shared.open(url) }
+                    else if url.isFileURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                } else { onOpenNote?(raw) }
             }
         default:
             break
@@ -342,5 +367,12 @@ private final class Relay: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any] else { return }
         MainActor.assumeIsolated { page?.receive(body) }
+    }
+}
+
+extension Page: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        let stays = action.targetFrame?.isMainFrame == false || action.request.url?.standardizedFileURL.path == Brand.url("Editor")?.appending(path: "index.html").standardizedFileURL.path
+        decisionHandler(stays ? .allow : .cancel)
     }
 }

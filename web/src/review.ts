@@ -47,6 +47,10 @@ const hunks = StateField.define<Hunks>({
     }),
 });
 
+export function pending(state: import('@codemirror/state').EditorState) {
+  return state.field(hunks, false)?.list ?? [];
+}
+
 const card = StateField.define<CardSpec | null>({
   create: () => null,
   update(value, tr) {

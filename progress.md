@@ -1,5 +1,86 @@
 # Progress
 
+## Folder window froze on a big folder (2026-11-03, fixed; uncommitted)
+- Report: "infinite loading after ⌘O". The user opened ~/Honey (381,799 entries, 8,024 .md). `sample` showed the main thread inside `Workspace.refresh()` called from the FSEvents callback: each walk took 5.6 s, and Xcode build output under the folder fired new events before it finished.
+- Fix: the FSEvents path rescans only for .md changes, folders appearing, disappearing or being renamed, or must-rescan flags, ignoring hidden and skipped directories. Scans run off the main thread (`refreshLater`), one in flight plus one coalesced rerun. Window start scans in the background and opens the last note when the list arrives. Create, follow, rename and trash edit the list in place instead of walking.
+- Evidence: FilesTests/aFolderWindowListsItsNotesOffTheMainThread (the list is still empty when start returns, then fills and the newest note opens) fails with the scan made synchronous again. Live: build/Quill.app opened ~/Honey, the main thread sat idle in the event loop at 0% CPU, and the window opened TASKS.md. Full suite passes.
+
+## Glass Q opening and night horizon (2026-11-03, done; uncommitted)
+Brief: bring the website's Q opening (~/honey/quill-website, `site.ts` and `daylight.ts`) into onboarding on the night horizon, and make the horizon feel insane.
+- Opening, ported in one Metal pass (`Horizon.metal`): the Q's outline traces (1.6 s), glass fills it (from 0.9 s), the outline fades, then the Q grows and slides into the lockup while "uill" resolves (from 1.9 s, 1.5 s, eases from the site). The glass follows the website's model (user preferred it over a rounded-solid version): a flat pane that shows the sky displaced down and right, so the horizon glow breaks at every edge, tinted toward the site's mid blue (0.15, 0.48, 0.70), with a crisp 1 px edge from the mask's gradient. Edges facing the upper left or the sunrise light up; the opposite edges darken slightly. Mask padded 8% so tops never clip. Masks come from the real brand paths (`Stage.masks`). The timeline is time-driven in `Glass`, so it is frame-accurate. The flat Lockup stays as the no-Metal fallback.
+- Horizon: computed in linear light with an exponential tone map, so glows bloom toward white and the navy stays deep. Per-channel scattering falloff runs white-cyan at the limb, through blue, to a saturated deep blue. Five slow drifting light folds above the sun point replace the Paper god rays (credit removed from CREDITS.txt). The planet gets lit cloud bands near the limb and a sun glint. Two-tap dither against banding. `Stage` is now Animatable, so dawn and drift actually animate.
+- Evidence: `Snapshots/stage` renders `stage-glass-*` keyframes at fixed times (`now` override) plus dawn, rising and setup. All inspected. A live --onboarding run of build/Quill.app drew the glass and horizon in a real window. Full suite 71 app + 64 core pass.
+- Soft-indent widths now round to whole pixels: a title-less callout's first line measured 14.45 then 14 px (the head widget's sub-pixel position) and tripped the warning intermittently. Suite then passed three times in a row with 0 page warnings.
+- Not measured: GPU cost per frame. ImageRenderer timing returned 0.1 ms, which isn't a GPU measurement, so that bench was deleted.
+
+## Performance pass (2026-11-03, done; uncommitted)
+Brief: "performance & perfection, make it feel insane to use." Journeys measured in a live hidden window (offscreen windows throttle rAF and gave false spikes): keystroke, arrow, open, scroll, Swift open.
+Baseline → now (92K-char fixtures, release):
+- Keystroke mean: prose 3.1 → 1.6 ms, vault 5.0 → 1.5 ms (HEAD was 2.8 / 4.6). Prosemark rebuilt every fold and hide decoration on each keystroke with a full-tree walk building path strings. Now `web/src/incremental.ts` rebuilds only top-level blocks touched by the edit or selection; prosemark is patched at build time (`web/patches/prosemark.mjs`, exact-match or the build fails).
+- Arrow down, vault: p50 5 → 1 ms, max 10 → 5 ms. Prosemark's reveal-on-arrow scanned every decoration twice per move; now it looks only near the caret.
+- Open a 92K note in the editor: 20–29 → 8–10 ms, flat with size. load() painted the previous note's scroll offset first, then jumped a frame later. Now scroll restores synchronously, by line plus margin (CodeMirror snapshot terms), not pixels.
+- Open a note with 15 embeds in a 700-file project (Swift): ~1,000 → 8 ms. Each unresolved embed walked the whole root. Now one file-name index per root, warmed in the background at window start, with one walk in flight per root and a generation check so a stale walk never lands. It drops only when an event changes which files exist; an atomic autosave rewrites a known file and keeps it. Must-rescan flags drop it. Image sizes come from ImageIO headers, not a decode.
+- Scroll, vault: worst step 8 → 7 ms, p95 7 → 5 ms; 40 px steps worst 8 → 5 ms. Soft indent re-measured every prefixed line on every scroll and caret move; now widths are cached per line text, selection state and font.
+- Soft-indent "indents still changing" warnings: a flood per edit (each crossed the bridge to Swift) → 0. Page exceptions in the suite: 18 → 0.
+- Swift → page per keystroke: 3 scripts (quill.hunks, quill.card twice) → 0 when nothing is under review. Page dedupes identical card/hunks/notes scripts and clears that memory on load (RoundTrip test).
+- Links: an HTML-block link click opened the browser twice (JS post plus the navigation guard). The guard now only cancels; tests use quill.invalid and never reach NSWorkspace.
+- Hanging indent: wrapped list, task, quote and callout lines now sit under their own text (within 0.3 pt). Prosemark measured the hang from `line.left + 6px`, assuming a 6 px base padding Quill doesn't have, so the first measure was short and the second drifted (the source of the warnings). It now measures from the line's text-indent origin, skips lines hidden inside a folded block, and callouts hang through a `--hang` variable. Screenshots taken in offscreen windows showed no hang at all; that was throttled measurement, not the app.
+Evidence: ShiftTests/wrappedLinesHangUnderTheirText (fails on the old patch set), IncrementalTests (600 random edits/selections, incremental vs full rebuild DOM equal, 0 page problems; a mutation that ignores the selection gives 471 mismatches), ShiftTests reopened-note test, FilesTests index test, listIndentsFollowAFaceChange. Fresh-eyes review (Sonnet 5.5; ran its own 2400-step Node fuzz of the patched prosemark fields, 0 mismatches). Fixed, each with a test that fails on the old code:
+- Folded callout chevrons kept the position they were built with; after typing above, a click toggled the wrong spot. The chevron now finds its callout at click time (aFoldedCalloutOpensAfterTypingAboveIt).
+- `incremental()` returned early on effect-only transactions before asking the `rebuilds` facet, so setHunks, setEmbeds and similar dispatched alone never rebuilt. The equivalence test now runs with hunks pending and compares data/aria attributes and the diagram changed flag; ignoring hunk changes gives 18 mismatches.
+- A pending review rebuilt both fields on every keystroke (the hunk list is a fresh array each edit). Now only a hunk change beyond mapping rebuilds.
+- The navigation guard allowed any file URL in the main frame. Now only the editor's index.html; the test navigates to editor.js, which the old guard allowed.
+- The file-name index race (above) and over-eager invalidation (theNameIndexDropsOnlyWhenFilesComeAndGo). Embed refresh skips events for the open note and hidden files.
+- quill-file range requests read the whole file. Now memory-mapped, and open-ended ranges serve 8 MB chunks (aByteRangeReadsOnlyAChunkOfABigFile).
+- `blocks()` memoized per tree: state cost per keystroke 0.55 → 0.45 ms.
+Not changed, with reasons:
+- Diagram widgets keep a build-time `from` for the last-good lookup on first draw. It only matters when a broken diagram is first drawn after its block moved without being rebuilt, and the next `drew` heals it.
+- A cold open in a big root with an embed that isn't beside the note still walks on the main thread once (74 ms on 700 files). Fixing it means a placeholder then a late fill, which is a visible shift.
+- The soft-indent warning filter stays narrowed to lines whose style changed, not lines that appear or vanish as the viewport moves.
+- With many disjoint dirty ranges per transaction, each partial build still wraps its output in a throwaway set. Typical edits have one to three.
+Evidence: full suite 71 app + 64 core, twice, 0 page warnings. Keystroke after all fixes (release, 92K): prose 1.6 ms, vault 1.5 ms.
+
+## Folder notes, Mermaid, Obsidian syntax, and feel (2026-11-03, done; uncommitted)
+Brief: open any folder as a window and write notes there with that folder as the co-writer's context; Mermaid via Pele; Obsidian syntax (callouts, embeds, properties, math); then the last 20% on feel.
+Raw material (scratchpad `raw/`): obsidian-help vault (179 en pages: all have frontmatter, 101 callouts, 93 embeds, 110 HTML), Mermaid docs syntax examples (541), Pele repo.
+Baseline: Pele 1.13.0 in Node renders 525/541 Mermaid docs examples; all 16 failures are ZenUML (`unsupported-diagram`), which Mermaid ships as an external plugin.
+Plan:
+1. [x] Editor: Mermaid live blocks (Pele, lazy bundle, palette-themed, last good render on error, diagram stays put with source opening beneath it, unclosed fences never render).
+2. [x] Editor: callouts, `![[embeds]]` (note, heading, image) through a Lezer inline parser, properties card, KaTeX math (lazy), `%%comments%%`, block ids.
+3. [x] Feel: pin the caret line when a block above it collapses; agent-typed diagrams fade in, never flash; dark-mode flips need no re-render.
+4. [x] App: a window per folder (⌘O, Dock drop, `quill .`), Open Recent, proxy icon (folder windows show title and proxy; home keeps the bare titlebar), restore on relaunch, working copies keyed by full path, scope chip, prompt scoped to the note's folder up to the root.
+5. [x] Evidence: all measured. Not done: a side-by-side in Obsidian.app.
+
+Evidence (2026-11-03):
+- obsidian-help audit (`QUILL_AUDIT`): 176/179 pages show no raw syntax off-caret. The six flagged lines are backslash-escaped syntax that Obsidian also shows literally. 0 diagram or math errors.
+- Mermaid docs in WebKit (`QUILL_EXAMPLES`, Frames/mermaidDocs): 525/541 render. All 16 failures are ZenUML ("No diagram type detected"), an external Mermaid plugin Pele doesn't ship.
+- Frames (`QUILL_FRAMES`, 20-diagram note, live hidden window): caret entering a diagram worst 3 ms, leaving worst 2 ms, scroll step worst 3 ms (WebKit clamps performance.now to 1 ms). Budget 8.3 ms.
+- Toggle shift (ShiftTests, now in the default suite): 0.0 pt in all five cases. Needed: a live hidden test window with WebKit occlusion detection off (offscreen windows get no rAF or scroll events, so CodeMirror's scroll anchor goes stale), whole-pixel code and blank line heights, and a sub-point `--nudge` on the content's top padding because WebKit truncates scrollTop to whole points.
+- Keystroke mean, same session, interleaved with HEAD's built editor (Bench, release, 92K chars): prose 2.79 → 3.04–3.20 ms (+9–15%), vault 4.5 → 4.95 ms (+10%). p50 identical at 1 ms timer resolution. The prose fixture carries 72 embeds and 348 links; embeds are about half the extra. The old 1.83 ms figure was the NSTextView editor.
+- Live architecture diagram (`QUILL_ARCH=claude`, copy of ~/honey/anvil, note at docs/architecture.md): 6 nodes, every one a real target or resource in Package.swift, every edge a real dependency. Target-level only; it read two files.
+- Two windows with docs/architecture.md each keep separate working copies (LoopTests).
+- Full suite: 125 tests pass (61 app, 64 core), twice in a row.
+
+Fresh-eyes review (Sonnet 5.5, saw code and screenshots, not these notes). Fixed, each with a test that fails on the old code:
+- Links in HTML blocks navigated the WKWebView away from the editor. Page now has a navigation delegate that cancels main-frame navigation off file:// and opens http(s)/mailto in the browser.
+- Opening a lone file outside any git repo made its folder the root, so ~/todo.md made ~ the root (whole-home walk, and quill-file: served ~/.ssh). Broad folders (~, its direct children, anything outside home) now open in the home window. `Files.allowed` rejects hidden components and ~/Library under every root, and note embeds go through it too.
+- Link messages opened any scheme, so a file chip on `tool.command` launched it. Swift now opens only http, https and mailto, and reveals file URLs in Finder.
+- Last-good diagrams: one timer per view kept only the last diagram's source. Now every source settles and positions come from the tree when the timer fires.
+- Embeds never refreshed. FSEvents now resend embeds whose file name changed.
+- Desk folders were a fresh UUID per window per launch and never cleaned up. Now keyed on the root path.
+- `--nudge` now resets on load. Boolean properties no longer look like links.
+Not changed, with reasons:
+- Pele per keystroke: a 300-node flowchart renders in 3.3 ms (Node), so no debounce.
+- Co-writer insertions above the caret aren't pinned. CodeMirror's own scroll anchor holds the viewport for remote edits.
+- `%%` comment blocks show a quiet "Hidden comment" label where Obsidian shows nothing, so the text isn't silently invisible in a plain-text editor.
+- Prefs.folders is empty after closing the last window. That matches Mac behavior: windows closed before quit don't come back.
+- blocks.ts is 1,190 lines. Splitting it is a refactor for another pass.
+
+Imperfect:
+- Keystroke mean sits at or just over +10% on link-heavy notes. Prosemark rebuilds every decoration on each keystroke; the remaining cost is ours riding that rebuild.
+- No side-by-side in Obsidian.app: the machine was in use, so nothing was driven onscreen.
+- Found during the live run: the npx cache for claude-agent-acp had lost zod/v4, so Claude Code failed to start in 0.7 s. Cleared ~/.npm/_npx/e123f968897835b4. Users with the same broken cache would see "The agent stopped".
+
 ## Brand mark and onboarding, Arc/Dia bar (2026-11-02, onboarding done; README pending)
 
 - Mark (efa15e4, chosen by the user from three directions: quill, nib Q, front nib): a cut goose quill with a vermilion nib, one even-odd outline in `assets/brand/quill.mjs`; `brand.mjs` writes the SVGs and `Sources/Quill/Brand/mark.json`; `scripts/icon.sh` renders `assets/Quill.icns`. Wordmark: Instrument Serif Italic "Quill".

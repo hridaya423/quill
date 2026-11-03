@@ -15,6 +15,8 @@ public struct Request: Sendable {
     public var mode: Mode
     public var sources: [Source]
     public var peers: [String]
+    public var folder: String?
+    public var root: String?
 
     public struct Source: Sendable {
         public var url: String
@@ -26,7 +28,9 @@ public struct Request: Sendable {
         }
     }
 
-    public init(words: String, title: String, path: String, text: String, selection: String?, mode: Mode, sources: [Source] = [], peers: [String] = []) {
+    public init(words: String, title: String, path: String, text: String, selection: String?, mode: Mode, sources: [Source] = [], peers: [String] = [], folder: String? = nil, root: String? = nil) {
+        self.folder = folder
+        self.root = root
         self.words = words
         self.title = title
         self.path = path
@@ -71,6 +75,17 @@ public func prompt(_ r: Request, canEditFiles: Bool, voice: String? = nil, brief
         "You can read the writer's other files when they point you at them. Their home folder is \(NSHomeDirectory()). A path they name, like \"Projects/site\" or \"@Projects/site\", is inside it unless it starts with /. Hidden folders and Library are off limits. Read with your file tools; don't run commands that change anything.",
         "When they name a folder or file, open it before you write a word: list the folder, then read the files that explain it, like the README and any plans or docs.",
         "Never invent what a file, folder, or project contains. If you can't find or open something they named, say so in one sentence and write nothing else.",
+        "",
+    ]
+    if let folder = r.folder {
+        let root = r.root.flatMap { $0 == folder ? nil : $0 }
+        lines += [
+            "The note lives in \(folder)\(root.map { ", inside \($0), the folder Quill has open" } ?? ""). That is the project they mean when they say \"this\", \"here\", \"the project\", or \"the code\", or ask for something about the project without naming a place. Start by listing \(folder)\(root.map { ", then work up to \($0)" } ?? ""), and read the README and the files that explain how it fits together before you write.",
+            "",
+        ]
+    }
+    lines += [
+        "When they ask for a diagram, flowchart, architecture, sequence, or timeline, write it into the note as a fenced ```mermaid block; Quill draws Mermaid. Name every node after a real file, module, service, or component you read, using its real name. Never add a node you didn't see in their files.",
         "",
     ]
     let how = canEditFiles

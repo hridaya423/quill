@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+app="$(cd "$(dirname "$(readlink "$0" || echo "$0")")/../../.." && pwd)"
+case "$app" in *.app) ;; *) app="Quill" ;; esac
+if [ $# -eq 0 ]; then set -- .; fi
+for target in "$@"; do
+  if [ ! -e "$target" ]; then
+    case "$target" in *.md) mkdir -p "$(dirname "$target")"; : > "$target" ;; *) echo "quill: $target does not exist" >&2; exit 1 ;; esac
+  fi
+  dir="$(cd "$(dirname "$target")" && pwd)"
+  path="$dir/$(basename "$target")"
+  [ "$target" = "." ] && path="$(pwd)"
+  open -a "$app" "$path"
+done

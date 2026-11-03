@@ -220,27 +220,130 @@ struct Listening: View {
     }
 }
 
-struct Stage: View {
+struct Glass: Equatable {
+    var start: Date?
+    var leave: Date?
+
+    struct Frame {
+        var trace = 0.0
+        var outline = 0.0
+        var reveal = 0.0
+        var morph = 0.0
+        var letters = 0.0
+    }
+
+    func at(_ now: Date) -> Frame {
+        guard let start else { return Frame() }
+        let t = now.timeIntervalSince(start)
+        let gone = leave.map { 1 - Self.curve(0.6, 0, 0.3, 1, now.timeIntervalSince($0) / 0.8) } ?? 1
+        let morph = Self.curve(0.77, 0, 0.175, 1, (t - 1.9) / 1.5)
+        return Frame(
+            trace: Self.curve(0.45, 0, 0.55, 1, t / 1.6),
+            outline: (1 - Self.curve(0.4, 0, 0.6, 1, (t - 1.45) / 0.45)) * 0.85 * gone,
+            reveal: Self.curve(0.23, 1, 0.32, 1, (t - 0.9) / 0.9) * gone,
+            morph: morph,
+            letters: max(0, min(1, (morph - 0.08) / 0.72)) * gone
+        )
+    }
+
+    static func curve(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, _ t: Double) -> Double {
+        let t = max(0, min(1, t))
+        guard t > 0, t < 1 else { return t }
+        var u = t
+        for _ in 0..<8 {
+            let x = 3 * (1 - u) * (1 - u) * u * x1 + 3 * (1 - u) * u * u * x2 + u * u * u - t
+            let dx = 3 * (1 - u) * (1 - u) * x1 + 6 * (1 - u) * u * (x2 - x1) + 3 * u * u * (1 - x2)
+            if abs(dx) < 1e-6 { break }
+            u = max(0, min(1, u - x / dx))
+        }
+        return 3 * (1 - u) * (1 - u) * u * y1 + 3 * (1 - u) * u * u * y2 + u * u * u
+    }
+}
+
+struct Stage: View, Animatable {
     var dawn: Double
     var drift: Double
+    var glass = Glass()
+    var now: Date?
     @Environment(\.accessibilityReduceMotion) private var still
+
+    nonisolated var animatableData: AnimatablePair<Double, Double> {
+        get { AnimatablePair(dawn, drift) }
+        set { dawn = newValue.first; drift = newValue.second }
+    }
 
     static let library: ShaderLibrary? = {
         let bundle = Bundle.main.bundleURL.pathExtension == "app" ? Bundle.main : Bundle.module
         return bundle.url(forResource: "default", withExtension: "metallib").map { ShaderLibrary(url: $0) }
     }()
 
+    static let pad: CGFloat = 0.08
+
+    static let mask: Image? = {
+        let tight = QuillMark.lettering.boundingRect
+        let bounds = tight.insetBy(dx: -tight.height * pad, dy: -tight.height * pad)
+        let width = 2048, height = Int(2048 / bounds.width * bounds.height)
+        let scale = CGFloat(width) / bounds.width
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+        context.translateBy(x: -bounds.minX, y: -bounds.minY)
+        context.setBlendMode(.plusLighter)
+        for (path, color) in [(QuillMark.capital, CGColor(red: 1, green: 0, blue: 0, alpha: 1)), (QuillMark.uill, CGColor(red: 0, green: 1, blue: 0, alpha: 1))] {
+            context.addPath(path.cgPath)
+            context.setFillColor(color)
+            context.fillPath(using: .evenOdd)
+        }
+        return context.makeImage().map { Image(decorative: $0, scale: 1) }
+    }()
+
+    static func rects(_ size: CGSize, morph: Double) -> (q: CGRect, u: CGRect) {
+        let bounds = QuillMark.lettering.boundingRect
+        let aspect = bounds.width / bounds.height
+        let mid = (QuillMark.capital.boundingRect.midX - bounds.minX) / bounds.width
+        let lockup = min(size.width * 0.46, 560)
+        let final = CGRect(x: (size.width - lockup) / 2, y: size.height * 0.42 - lockup / aspect / 2, width: lockup, height: lockup / aspect)
+        let tall = size.height * 0.48
+        let start = CGRect(x: size.width / 2 - mid * tall * aspect, y: size.height * 0.42 - tall / 2, width: tall * aspect, height: tall)
+        let k = CGFloat(morph)
+        let q = CGRect(x: start.minX + (final.minX - start.minX) * k, y: start.minY + (final.minY - start.minY) * k,
+                       width: start.width + (final.width - start.width) * k, height: start.height + (final.height - start.height) * k)
+        return (q, final)
+    }
+
     var body: some View {
         Group {
-            if let library = Self.library {
-                TimelineView(.animation(minimumInterval: 1 / 60, paused: still)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
+            if let library = Self.library, let mask = Self.mask {
+                TimelineView(.animation(minimumInterval: 1 / 60, paused: still && glass.start == nil)) { context in
+                    let date = now ?? context.date
+                    let t = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
+                    let frame = glass.at(date)
                     GeometryReader { geo in
-                        Rectangle()
-                            .colorEffect(library.horizon(
-                                .float2(geo.size), .float(t), .float(dawn), .float(drift),
-                                .color(Brand.night), .color(Brand.blue), .color(Brand.sky)
-                            ))
+                        let r = Self.rects(geo.size, morph: frame.morph)
+                        let qPad = r.q.insetBy(dx: -r.q.height * Self.pad, dy: -r.q.height * Self.pad)
+                        let uPad = r.u.insetBy(dx: -r.u.height * Self.pad, dy: -r.u.height * Self.pad)
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .colorEffect(library.horizon(
+                                    .float2(geo.size), .float(t), .float(dawn), .float(drift),
+                                    .color(Brand.night), .color(Brand.blue), .color(Brand.sky),
+                                    .image(mask),
+                                    .float4(qPad.minX, qPad.minY, qPad.width, qPad.height),
+                                    .float4(uPad.minX, uPad.minY, uPad.width, uPad.height),
+                                    .float(frame.reveal), .float(frame.letters)
+                                ))
+                            if frame.outline > 0 {
+                                BrandShape(outline: QuillMark.capital, frame: QuillMark.lettering.boundingRect)
+                                    .trim(from: 0, to: frame.trace)
+                                    .stroke(Brand.sky, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+                                    .frame(width: r.q.width, height: r.q.height)
+                                    .offset(x: r.q.minX, y: r.q.minY)
+                                    .opacity(frame.outline)
+                                    .shadow(color: Brand.sky.opacity(0.8), radius: 6)
+                            }
+                        }
                     }
                 }
             } else {
@@ -319,6 +422,7 @@ struct Film: View {
     var run: Firstrunner
     var fallback: String
     @Binding var dawn: Double
+    @Binding var glass: Glass
     var finish: () -> Void
     @State private var beat = 0
     @State private var written = 0.0
@@ -332,13 +436,15 @@ struct Film: View {
 
     var body: some View {
         ZStack {
-            Lockup(written: written, typed: beat >= 1 ? 1 : 0)
-                .frame(width: 330)
-                .offset(y: -30)
-                .opacity(beat >= 2 ? 0 : 1)
-                .scaleEffect(beat >= 2 ? 0.94 : 1)
-                .blur(radius: beat >= 2 ? 10 : 0)
-                .offset(y: beat >= 2 ? -36 : 0)
+            if !Self.glassy {
+                Lockup(written: written, typed: beat >= 1 ? 1 : 0)
+                    .frame(width: 330)
+                    .offset(y: -30)
+                    .opacity(beat >= 2 ? 0 : 1)
+                    .scaleEffect(beat >= 2 ? 0.94 : 1)
+                    .blur(radius: beat >= 2 ? 10 : 0)
+                    .offset(y: beat >= 2 ? -36 : 0)
+            }
 
             VStack(spacing: 46) {
                 Flow(gap: size * 0.26, leading: size * 1.28) {
@@ -429,6 +535,8 @@ struct Film: View {
 
     private func at(_ ms: Int) async { try? await Task.sleep(for: .milliseconds(ms)) }
 
+    static var glassy: Bool { Stage.library != nil && Stage.mask != nil }
+
     private func play() async {
         if still {
             dawn = 0.6
@@ -438,10 +546,19 @@ struct Film: View {
         await at(250)
         withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 3.2)) { dawn = 1 }
         await at(450)
-        withAnimation(.timingCurve(0.45, 0.05, 0.35, 1, duration: 2.0)) { written = 1 }
-        await at(1700)
-        withAnimation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.9)) { beat = 1 }
-        await at(1600)
+        if Self.glassy {
+            glass = Glass(start: .now)
+            await at(3400)
+            beat = 1
+            await at(1300)
+            glass.leave = .now
+            await at(300)
+        } else {
+            withAnimation(.timingCurve(0.45, 0.05, 0.35, 1, duration: 2.0)) { written = 1 }
+            await at(1700)
+            withAnimation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.9)) { beat = 1 }
+            await at(1600)
+        }
         tokens = Token.split(run.sentence?.text ?? fallback)
         withAnimation(.timingCurve(0.6, 0, 0.3, 1, duration: 0.9)) {
             beat = 2
@@ -681,6 +798,7 @@ struct Onboarding: View {
     @State private var listener = Listener()
     @State private var monitor: Any?
     @State private var dawn = 0.0
+    @State private var glass = Glass()
     @State private var cut = false
     @State private var struck = false
     @Namespace private var modes
@@ -691,10 +809,10 @@ struct Onboarding: View {
 
     var body: some View {
         ZStack {
-            Stage(dawn: dawn, drift: drift)
+            Stage(dawn: dawn, drift: drift, glass: glass)
                 .animation(.timingCurve(0.65, 0, 0.35, 1, duration: 1.1), value: run.step)
             if run.step == .overture {
-                Film(run: run, fallback: sample, dawn: $dawn) { go(.folder) }
+                Film(run: run, fallback: sample, dawn: $dawn, glass: $glass) { go(.folder) }
                     .transition(.opacity)
             } else {
                 setup.transition(.opacity)
@@ -1184,6 +1302,7 @@ struct Onboarding: View {
     }
 
     private func go(_ step: Firstrunner.Step) {
+        if glass.start != nil, glass.leave == nil { glass.leave = .now }
         withAnimation(still ? nil : .spring(response: 0.6, dampingFraction: 0.9)) { run.step = step }
     }
 
