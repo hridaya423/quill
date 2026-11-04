@@ -1,5 +1,13 @@
 # Progress
 
+## README for reach (2026-11-04, done; uncommitted)
+- New hook line, a real demo GIF (`.github/assets/demo.gif`, Claude Code on Opus 5.5 via ⌘K "make it direct", wait at 4×), five highlights, co-writer logo strip (`coworkers-{light,dark}.svg`, built from `Sources/Quill/Brand` marks), website and getting-started links, v0.2 features (folder windows, Obsidian syntax, Mermaid), shortcut and co-writer tables folded into `<details>`.
+- Repo description and topics updated (added obsidian, cursor, ai-writing; removed writing-tool, acp, swiftui). Social preview was already custom.
+- Evidence: GitHub's /markdown render inspected in light and dark; the GIF's frames inspected.
+- Fixed: ⌘] and ⌘[ ran CodeMirror's indent and outdent (defaultKeymap Mod-] / Mod-[), wrote spaces into the note, and never reached Next/Previous Change. They are now filtered out of the page keymap. Test: PageTests/bracketShortcutsReachTheMenuInsteadOfIndenting (failed before: the event was prevented).
+- Fixed: Keep and Keep all changed only the review, so nothing scheduled a save and the kept text reached the file only on the next edit or quit. A review change now schedules the save. Test: LoopTests/keepAllSavesTheNoteWithoutAnotherEdit (failed before).
+- Evidence: full suite 74 app + 64 core pass. Live in build/Quill.app with Claude Code: two ⌘] presses showed "2 of 6" with the struck-words card and left the heading untouched; 1.5 s after Keep all the file held the kept text, no quit.
+
 ## Folder window froze on a big folder (2026-11-03, fixed; uncommitted)
 - Report: "infinite loading after ⌘O". The user opened ~/Honey (381,799 entries, 8,024 .md). `sample` showed the main thread inside `Workspace.refresh()` called from the FSEvents callback: each walk took 5.6 s, and Xcode build output under the folder fired new events before it finished.
 - Fix: the FSEvents path rescans only for .md changes, folders appearing, disappearing or being renamed, or must-rescan flags, ignoring hidden and skipped directories. Scans run off the main thread (`refreshLater`), one in flight plus one coalesced rerun. Window start scans in the background and opens the last note when the list arrives. Create, follow, rename and trash edit the list in place instead of walking.
