@@ -164,6 +164,17 @@ struct LoopTests {
         #expect(record?.exchanges.allSatisfy { $0.outcome == .kept } == true)
     }
 
+    @Test(.enabled(if: support != nil)) func keepAllSavesTheNoteWithoutAnotherEdit() async throws {
+        let agent = ScriptedAgent([{ $0.replacingOccurrences(of: "We are basically trying to kind of build a tool that maybe helps", with: "We build a tool that helps") }])
+        let (ws, _, note) = try await setup(agent)
+        defer { ws.quit() }
+        ws.ask("make the first sentence confident")
+        await settle(ws)
+        ws.keep()
+        try await Task.sleep(for: .milliseconds(900))
+        #expect(try String(contentsOf: note, encoding: .utf8).contains("We build a tool that helps"))
+    }
+
     @Test(.enabled(if: support != nil)) func twoWindowsWithTheSameNoteNameNeverShareAWorkingCopy() async throws {
         let base = FileManager.default.temporaryDirectory.appending(path: "quill-two-\(UUID().uuidString)")
         var opened: [(Workspace, Page, ScriptedAgent, URL)] = []
