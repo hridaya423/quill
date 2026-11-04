@@ -130,7 +130,7 @@ const setup = [
   keymap.of([
     ...prosemarkMarkdownFormattingKeymap,
     ...closeBracketsKeymap,
-    ...defaultKeymap,
+    ...defaultKeymap.filter((b) => b.key !== 'Mod-[' && b.key !== 'Mod-]'),
     ...searchKeymap,
     ...foldKeymap,
     ...completionKeymap,

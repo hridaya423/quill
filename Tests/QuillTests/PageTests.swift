@@ -59,6 +59,18 @@ struct PageTests {
         #expect(page.selectedRange().location == 7)
     }
 
+    @Test func bracketShortcutsReachTheMenuInsteadOfIndenting() async throws {
+        let (page, window) = try await page()
+        defer { window.close() }
+        let before = page.text
+        for key in ["]", "["] {
+            let prevented = try await js(page, "(() => { const e = new KeyboardEvent('keydown', {key: '\(key)', code: 'Bracket\(key == "]" ? "Right" : "Left")', metaKey: true, bubbles: true, cancelable: true}); quill.view.contentDOM.dispatchEvent(e); return e.defaultPrevented })()") as? Bool
+            #expect(prevented == false)
+        }
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(page.text == before)
+    }
+
     @Test func anAgentEditPlaysInAndUndoesAsOneTurn() async throws {
         let (page, window) = try await page()
         defer { window.close() }

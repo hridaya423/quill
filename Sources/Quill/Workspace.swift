@@ -180,6 +180,7 @@ final class Workspace {
         editor.onReview = { [weak self, weak editor] in
             guard let self, let editor, self.review != editor.review else { return }
             self.review = editor.review
+            self.saveSoon()
         }
         editor.onResolve = { [weak self] hunks, outcome in self?.resolved(hunks, outcome) }
         editor.onUndo = { name, back in Ledger.event(back ? "undo" : "redo", detail: name) }
@@ -492,6 +493,10 @@ final class Workspace {
             }
             if moved != margin { margin = moved }
         }
+        saveSoon()
+    }
+
+    private func saveSoon() {
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(450))
